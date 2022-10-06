@@ -18,7 +18,7 @@ endfunction
 if exists("$NVIM_PREVIEWER_PLUGIN_PATH")
     let s:bin=$NVIM_PREVIEWER_PLUGIN_PATH
 else
-    let s:bin=expand("%:p:h") . '/..' . '/target/release/nvim-previewer'
+    let s:bin=expand("<sfile>:p:h:h") . '/target/release/nvim-previewer'
 endif
 if exists('s:jobid') && s:jobid > 0
     finish
