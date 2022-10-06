@@ -1,0 +1,2 @@
+let curdir = expand('<sfile>:p:h')
+exec printf('set runtimepath=%s,%s', $VIMRUNTIME, curdir . '/runner')

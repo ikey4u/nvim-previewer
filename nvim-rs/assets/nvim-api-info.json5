@@ -1,0 +1,114 @@
+{
+    "version": {
+        "major": 0,
+        "minor": 7,
+        "patch": 0,
+        "api_level": 9,
+        "api_compatible": 0,
+        "api_prerelease": false
+    },
+    "functions": [
+        {
+            "method": false,
+            "name": "nvim_get_autocmds",
+            "since": 9,
+            "parameters": [
+                [
+                    "Dictionary",
+                    "opts"
+                ]
+            ],
+            "return_type": "Array"
+        },
+        {
+            "method": false,
+            "name": "nvim_create_autocmd",
+            "since": 9,
+            "parameters": [
+                [
+                    "Object",
+                    "event"
+                ],
+                [
+                    "Dictionary",
+                    "opts"
+                ]
+            ],
+            "return_type": "Integer"
+        },
+        {
+            "method": true,
+            "name": "nvim_buf_get_lines",
+            "since": 1,
+            "parameters": [
+                [
+                    "Buffer",
+                    "buffer"
+                ],
+                [
+                    "Integer",
+                    "start"
+                ],
+                [
+                    "Integer",
+                    "end"
+                ],
+                [
+                    "Boolean",
+                    "strict_indexing"
+                ]
+            ],
+            "return_type": "ArrayOf(String)"
+        },
+    ],
+    "ui_events": [
+        {
+            "parameters": [
+                [
+                    "Boolean",
+                    "enabled"
+                ],
+                [
+                    "Array",
+                    "cursor_styles"
+                ]
+            ],
+            "since": 3,
+            "name": "mode_info_set"
+        },
+    ],
+    "ui_options": [
+        "rgb",
+        "ext_cmdline",
+        "ext_popupmenu",
+        "ext_tabline",
+        "ext_wildmenu",
+        "ext_messages",
+        "ext_linegrid",
+        "ext_multigrid",
+        "ext_hlstate",
+        "ext_termcolors"
+    ],
+    "error_types": {
+        "Exception": {
+            "id": 0
+        },
+        "Validation": {
+            "id": 1
+        }
+    },
+    "types": {
+        "Buffer": {
+            "id": 0,
+            "prefix": "nvim_buf_"
+        },
+        "Window": {
+            "id": 1,
+            "prefix": "nvim_win_"
+        },
+        "Tabpage": {
+            "id": 2,
+            "prefix": "nvim_tabpage_"
+        }
+    }
+}
