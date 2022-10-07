@@ -16,10 +16,12 @@ function! s:connect(...)
 endfunction
 
 if exists("$NVIM_PREVIEWER_PLUGIN_PATH")
-    let s:bin=$NVIM_PREVIEWER_PLUGIN_PATH
+    let s:bin = $NVIM_PREVIEWER_PLUGIN_PATH
 else
-    let s:bin=expand("<sfile>:p:h:h") . '/target/release/nvim-previewer'
+    let s:bin = expand("<sfile>:p:h:h") . '/target/release/nvim-previewer'
 endif
+" nvim-previewer binary will use this variable as the default style directory
+let g:nvim_previewer_script_dir = expand("<sfile>:p:h")
 if exists('s:jobid') && s:jobid > 0
     finish
 endif
