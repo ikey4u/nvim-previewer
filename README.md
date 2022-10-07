@@ -25,3 +25,7 @@ To cutmoize the broswer and listening port, using these options
 
 Run `:Preview` in your markdown file, and you are done.
 
+## Logs
+
+Log files are stored into `nvim-previewer` directory under the cache directory of neovim (get it
+using `:echo stdpath('cache')`) in daily.

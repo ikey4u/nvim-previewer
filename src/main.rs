@@ -1,27 +1,34 @@
 use std::fs::File;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::cell::RefCell;
+use std::net::SocketAddr;
 
 use nvim_rs::Value;
 use nvim_rs::NeovimClient;
 use anyhow::Result;
 use anyhow::Context;
 use tracing_subscriber::fmt::writer::MakeWriter;
-use axum::response::{Response, IntoResponse};
+use axum::response::Response;
+use axum::response::IntoResponse;
 use http::status::StatusCode;
 use once_cell::sync::Lazy;
-use comrak::{markdown_to_html, ComrakOptions};
+use comrak::markdown_to_html;
+use comrak::ComrakOptions;
 
 const DEFAULT_PORT: u16 = 3008;
+const DEFUALT_HOST: &'static str = "127.0.0.1";
+const PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 static PREVIEW_FILE_PATH: Lazy<Arc<Mutex<Option<String>>>> = Lazy::new(|| {
     Arc::new(Mutex::new(None))
 });
 
 fn server<'a>(config: &'a PreviewerConfig) -> Result<()> {
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], config.port));
+    let addr = format!("{DEFUALT_HOST}:{}", config.port).parse::<SocketAddr>()?;
     log::info!("web server start to listen at {}", addr.to_string());
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(5)
@@ -33,7 +40,7 @@ fn server<'a>(config: &'a PreviewerConfig) -> Result<()> {
             .serve(app.into_make_service())
             .await.unwrap();
     });
-    log::info!("web server exit with result: ${r:?}");
+    log::info!("web server exit with result: {r:?}");
     Ok(())
 }
 
@@ -84,12 +91,12 @@ async fn render() -> impl IntoResponse {
 }
 
 fn main() {
-    let file_appender = tracing_appender::rolling::daily(".", ".logs/nvim-rs.log");
+    let previewer = Previewer::new(nvim_rs::new_client());
+
+    let file_appender = tracing_appender::rolling::daily(previewer.logdir.as_path(), PKG_VERSION);
     let (non_blocking_appender, _guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt().with_writer(non_blocking_appender.make_writer()).init();
 
-    let client = nvim_rs::new_client();
-    let previewer = Previewer::new(client);
     let config = previewer.config.clone();
     std::thread::spawn(move || {
         if let Err(e) = server(&config) {
@@ -148,11 +155,14 @@ struct Previewer {
     client: RefCell<NeovimClient>,
     config: PreviewerConfig,
     receiver: Receiver<(String, Vec<Value>)>,
+    logdir: PathBuf,
+    cachedir: PathBuf,
 }
 
 impl Previewer {
     pub fn new(mut client: NeovimClient) -> Self {
         let receiver = client.start();
+        let cachedir = PathBuf::from(client.eval("stdpath('cache')")).join(PKG_NAME);
         Self {
             receiver,
             config: PreviewerConfig::new(
@@ -160,6 +170,8 @@ impl Previewer {
                 client.eval("g:nvim_previewer_port"),
             ),
             client: RefCell::new(client),
+            logdir: cachedir.join("logs"),
+            cachedir,
         }
     }
 
@@ -171,7 +183,7 @@ impl Previewer {
         let mut path = PREVIEW_FILE_PATH.lock().unwrap();
         *path = params.get(0).context("file path is not provided")?.as_str().map(|v| v.to_owned());
 
-        let url = format!("http://127.0.0.1:{}", self.config.port);
+        let url = format!("http://{DEFUALT_HOST}:{}", self.config.port);
         let r = if let Some(browser) = &self.config.browser {
             open::with(url, browser)
         } else {
