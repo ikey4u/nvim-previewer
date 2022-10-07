@@ -9,19 +9,26 @@ use std::sync::mpsc::Receiver;
 use std::cell::RefCell;
 use std::net::SocketAddr;
 
-use axum::extract::Path as AxumPath;
-use nvim_rs::Value;
-use nvim_rs::NeovimClient;
 use anyhow::Result;
 use anyhow::Context;
-use tracing_subscriber::fmt::writer::MakeWriter;
 use axum::response::Response;
 use axum::response::IntoResponse;
 use axum::extract::Extension;
-use http::status::StatusCode;
-use once_cell::sync::Lazy;
-use comrak::markdown_to_html;
+use axum::extract::Query;
+use axum::handler::Handler;
+use axum::http;
+use axum::http::status::StatusCode;
+use comrak::Arena;
+use comrak::nodes::NodeValue;
+use comrak::parse_document;
+use comrak::format_html;
 use comrak::ComrakOptions;
+use comrak::nodes::AstNode;
+use nvim_rs::Value;
+use nvim_rs::NeovimClient;
+use serde::Deserialize;
+use tracing_subscriber::fmt::writer::MakeWriter;
+use once_cell::sync::Lazy;
 
 const DEFAULT_PORT: u16 = 3008;
 const DEFUALT_HOST: &'static str = "127.0.0.1";
@@ -30,6 +37,22 @@ const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
 static PREVIEW_FILE_PATH: Lazy<Arc<Mutex<Option<String>>>> = Lazy::new(|| {
     Arc::new(Mutex::new(None))
 });
+
+#[derive(Deserialize)]
+enum FileTag {
+    #[serde(rename = "css")]
+    CSS,
+    #[serde(rename = "js")]
+    JS,
+    #[serde(rename = "path")]
+    Path,
+}
+
+#[derive(Deserialize)]
+struct FileMeta {
+    tag: FileTag,
+    val: Option<String>,
+}
 
 fn server(config: PreviewerConfig) -> Result<()> {
     let config = Arc::new(config);
@@ -42,7 +65,8 @@ fn server(config: PreviewerConfig) -> Result<()> {
     let r = rt.block_on(async {
         let app = axum::Router::new()
             .route("/", axum::routing::get(render))
-            .route("/file/:name", axum::routing::get(file))
+            .route("/file", axum::routing::get(file))
+            .fallback(fallback.into_service())
             .layer(Extension(config));
         axum::Server::bind(&addr)
             .serve(app.into_make_service())
@@ -52,43 +76,92 @@ fn server(config: PreviewerConfig) -> Result<()> {
     Ok(())
 }
 
-async fn file(Extension(config): Extension<Arc<PreviewerConfig>>, AxumPath(name): AxumPath<String>) -> impl IntoResponse {
-    let mut mime = "text/plain";
-    let content = match name.as_str() {
-        "css" => {
-            let mut content = String::new();
-            mime = "text/css";
-            if let Ok(mut f) = File::open(config.css_file.as_path()) {
-                _ = f.read_to_string(&mut content);
-            }
-            content
+async fn fallback(uri: http::Uri) -> impl IntoResponse {
+    let (status, mime, content) = match uri.to_string().as_str() {
+        "/favicon.ico" => {
+            (StatusCode::OK, "image/x-icon", include_bytes!("static/favicon.ico").to_vec())
         }
-        "js" => {
-            mime = "text/javascript";
-            let mut content = String::new();
-            if let Ok(mut f) = File::open(config.js_file.as_path()) {
-                _ = f.read_to_string(&mut content);
-            }
-            content
+        _ => {
+            log::warn!("unknown uri: {uri}");
+            (StatusCode::NOT_FOUND, "text/plain", format!("No route for {uri}").as_bytes().to_vec())
         }
-        _ => "".to_owned()
     };
+    Response::builder().status(status)
+        .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str(mime).unwrap())
+        .body(axum::body::boxed(axum::body::Full::from(content)))
+        .unwrap()
+}
+
+async fn file(Extension(config): Extension<Arc<PreviewerConfig>>, filemeta: Query<FileMeta>) -> impl IntoResponse {
+    let filepath = match filemeta.tag {
+        FileTag::CSS => {
+            config.css_file.as_path()
+        }
+        FileTag::JS => {
+           config.js_file.as_path()
+        }
+        FileTag::Path => {
+            if let Some(val) = filemeta.val.as_deref() {
+                Path::new(val)
+            } else {
+                Path::new("")
+            }
+        }
+    };
+    let mime = mime_guess::from_path(filepath).first_or_text_plain();
+    let mut mime = mime.as_ref();
+    let mut content = vec![];
+    if let Ok(mut f) = File::open(filepath) {
+        _ = f.read_to_end(&mut content);
+    }
+    if content.len() == 0 {
+        mime = "text/plain";
+        content.extend_from_slice(format!("can not read file: {}", filepath.display()).as_bytes());
+    }
     Response::builder().status(StatusCode::OK)
         .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str(mime).unwrap())
         .body(axum::body::boxed(axum::body::Full::from(content)))
         .unwrap()
 }
 
-async fn render(Extension(_config): Extension<Arc<PreviewerConfig>>) -> impl IntoResponse {
+async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl IntoResponse {
     let html = match PREVIEW_FILE_PATH.lock().unwrap().as_ref() {
         Some(path) => {
             log::info!("start to render file: {path}");
+            let path = Path::new(path);
+            let filedir = if let Some(d) = path.parent() {
+                d
+            } else {
+                path
+            };
             if let Ok(mut f) = File::open(path) {
                 let mut content = String::new();
                 _ = f.read_to_string(&mut content);
-                markdown_to_html(&content, &ComrakOptions::default())
+
+                let arena = Arena::new();
+                let root = parse_document(&arena, &content, &ComrakOptions::default());
+                markdown_hook(root, &|node| {
+                    match &mut node.data.borrow_mut().value {
+                        &mut NodeValue::Image(ref mut link) => {
+                            let url = std::str::from_utf8(link.url.as_ref()).unwrap();
+                            let local_filepath = filedir.join(url);
+                            if local_filepath.exists() {
+                                link.url = format!(
+                                    "http://{DEFUALT_HOST}:{}/file?tag=path&val={}",
+                                    config.port,
+                                    local_filepath.display(),
+                                ).as_bytes().to_vec();
+                            }
+                        }
+                        _ => {}
+                    }
+                });
+
+                let mut html = vec![];
+                format_html(root, &ComrakOptions::default(), &mut html).unwrap();
+                String::from_utf8(html).unwrap()
             } else {
-                format!("failed to open file: {path}")
+                format!("failed to open file: {}", path.display())
             }
         }
         None => {
@@ -105,13 +178,13 @@ async fn render(Extension(_config): Extension<Arc<PreviewerConfig>>) -> impl Int
                 <meta name="format-detection" content="telephone=no">
                 <meta name="msapplication-tap-highlight" content="no">
                 <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1">
-                <link rel="stylesheet" type="text/css" href="/file/css">
+                <link rel="stylesheet" type="text/css" href="/file?tag=css">
+                <script src="/file?tag=js"></script>
             </head>
             <body class="nvim-previewer">
                 <article class="markdown-body">
                     {body}
                 </article>
-                <script src="/file/js"></script>
             </body>
         </html>
     "#,
@@ -122,6 +195,16 @@ async fn render(Extension(_config): Extension<Arc<PreviewerConfig>>) -> impl Int
         .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/html").unwrap())
         .body(axum::body::boxed(axum::body::Full::from(html_template)))
         .unwrap()
+}
+
+fn markdown_hook<'a, F>(node: &'a AstNode<'a>, hook: &F)
+where
+    F: Fn(&'a AstNode<'a>)
+{
+    hook(node);
+    for c in node.children() {
+        markdown_hook(c, hook)
+    }
 }
 
 #[derive(Debug, Clone)]
