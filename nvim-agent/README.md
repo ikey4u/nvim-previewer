@@ -1,4 +1,4 @@
-# nvim-rs - neovim plugin framework for rust
+# nvim-agent - neovim plugin framework for rust
 
 - Development
 

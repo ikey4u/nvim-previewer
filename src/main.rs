@@ -24,8 +24,8 @@ use comrak::parse_document;
 use comrak::format_html;
 use comrak::ComrakOptions;
 use comrak::nodes::AstNode;
-use nvim_rs::Value;
-use nvim_rs::NeovimClient;
+use nvim_agent::Value;
+use nvim_agent::NeovimClient;
 use serde::Deserialize;
 use tracing_subscriber::fmt::writer::MakeWriter;
 use once_cell::sync::Lazy;
@@ -338,7 +338,7 @@ impl Previewer {
 }
 
 fn main() {
-    let previewer = Previewer::new(nvim_rs::new_client());
+    let previewer = Previewer::new(nvim_agent::new_client());
 
     let file_appender = tracing_appender::rolling::daily(previewer.logdir.as_path(), PKG_VERSION);
     let (non_blocking_appender, _guard) = tracing_appender::non_blocking(file_appender);

@@ -621,26 +621,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nvim-previewer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "comrak",
- "log",
- "mime_guess",
- "nvim-rs",
- "once_cell",
- "open",
- "serde",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "nvim-rs"
+name = "nvim-agent"
 version = "0.1.0"
 dependencies = [
  "errlog",
@@ -659,6 +640,25 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "unix_socket",
+]
+
+[[package]]
+name = "nvim-previewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "comrak",
+ "log",
+ "mime_guess",
+ "nvim-agent",
+ "once_cell",
+ "open",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
