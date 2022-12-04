@@ -18,12 +18,9 @@ use axum::extract::Query;
 use axum::handler::Handler;
 use axum::http;
 use axum::http::status::StatusCode;
-use comrak::Arena;
-use comrak::nodes::NodeValue;
-use comrak::parse_document;
-use comrak::format_html;
-use comrak::ComrakOptions;
-use comrak::nodes::AstNode;
+use concisemark::Page;
+use concisemark::node::Node;
+use concisemark::node::NodeTagName;
 use nvim_agent::Value;
 use nvim_agent::NeovimClient;
 use serde::Deserialize;
@@ -137,29 +134,28 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
             if let Ok(mut f) = File::open(path) {
                 let mut content = String::new();
                 _ = f.read_to_string(&mut content);
-
-                let arena = Arena::new();
-                let root = parse_document(&arena, &content, &ComrakOptions::default());
-                markdown_hook(root, &|node| {
-                    match &mut node.data.borrow_mut().value {
-                        &mut NodeValue::Image(ref mut link) => {
-                            let url = std::str::from_utf8(link.url.as_ref()).unwrap();
-                            let local_filepath = filedir.join(url);
-                            if local_filepath.exists() {
-                                link.url = format!(
-                                    "http://{DEFUALT_HOST}:{}/file?tag=path&val={}",
-                                    config.port,
-                                    local_filepath.display(),
-                                ).as_bytes().to_vec();
-                            }
+                let page = Page::new(content);
+                let hook = |node: &Node| {
+                    let mut nodedata = node.data.borrow_mut();
+                    if nodedata.tag.name == NodeTagName::Image {
+                        let src = if let Some(src) = nodedata.tag.attrs.get("src") {
+                            src.to_owned()
+                        } else {
+                            "".to_owned()
+                        };
+                        let local_filepath = filedir.join(src);
+                        if local_filepath.exists() {
+                            let src = format!(
+                                "http://{DEFUALT_HOST}:{}/file?tag=path&val={}",
+                                config.port,
+                                local_filepath.display(),
+                            );
+                            nodedata.tag.attrs.insert("src".to_owned(), src);
                         }
-                        _ => {}
                     }
-                });
-
-                let mut html = vec![];
-                format_html(root, &ComrakOptions::default(), &mut html).unwrap();
-                String::from_utf8(html).unwrap()
+                };
+                page.transform(hook);
+                page.render()
             } else {
                 format!("failed to open file: {}", path.display())
             }
@@ -180,6 +176,10 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1">
                 <link rel="stylesheet" type="text/css" href="/file?tag=css">
                 <script src="/file?tag=js"></script>
+
+                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/katex.min.css" integrity="sha384-Juol1FqnotbkyZUT5Z7gUPjQ9gzlwCENvUZTpQBAPxtusdwFLRy382PSDx5UUJ4/" crossorigin="anonymous">
+                <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/katex.min.js" integrity="sha384-97gW6UIJxnlKemYavrqDHSX3SiygeOwIZhwyOKRfSaf0JWKRVj9hLASHgFTzT+0O" crossorigin="anonymous"></script>
+                <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" onload="renderMathInElement(document.body);"> </script>
             </head>
             <body class="nvim-previewer">
                 <article class="markdown-body">
@@ -195,16 +195,6 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
         .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/html").unwrap())
         .body(axum::body::boxed(axum::body::Full::from(html_template)))
         .unwrap()
-}
-
-fn markdown_hook<'a, F>(node: &'a AstNode<'a>, hook: &F)
-where
-    F: Fn(&'a AstNode<'a>)
-{
-    hook(node);
-    for c in node.children() {
-        markdown_hook(c, hook)
-    }
 }
 
 #[derive(Debug, Clone)]
