@@ -1,6 +1,12 @@
+mod error;
+
+use error::Result;
+
 use std::fmt::Display;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -8,14 +14,12 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::cell::RefCell;
 use std::net::SocketAddr;
+use std::process::Command;
 
-use anyhow::Result;
-use anyhow::Context;
 use axum::response::Response;
 use axum::response::IntoResponse;
 use axum::extract::Extension;
 use axum::extract::Query;
-use axum::handler::Handler;
 use axum::http;
 use axum::http::status::StatusCode;
 use concisemark::Page;
@@ -53,17 +57,21 @@ struct FileMeta {
 
 fn server(config: PreviewerConfig) -> Result<()> {
     let config = Arc::new(config);
-    let addr = format!("{DEFUALT_HOST}:{}", config.port).parse::<SocketAddr>()?;
+    let addr = format!("{DEFUALT_HOST}:{}", config.port)
+        .parse::<SocketAddr>()
+        .map_err(|e| anyerr!("failed to parse socket addr: {e:?}"))?;
     log::info!("web server start to listen at {}", addr.to_string());
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(5)
         .enable_all()
-        .build()?;
+        .build()
+        .map_err(|e| anyerr!("failed to build runtime: {e:?}"))?;
     let r = rt.block_on(async {
         let app = axum::Router::new()
             .route("/", axum::routing::get(render))
+            .route("/pdf", axum::routing::get(render_as_pdf))
             .route("/file", axum::routing::get(file))
-            .fallback(fallback.into_service())
+            .fallback(fallback)
             .layer(Extension(config));
         axum::Server::bind(&addr)
             .serve(app.into_make_service())
@@ -119,6 +127,57 @@ async fn file(Extension(config): Extension<Arc<PreviewerConfig>>, filemeta: Quer
         .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str(mime).unwrap())
         .body(axum::body::boxed(axum::body::Full::from(content)))
         .unwrap()
+}
+
+async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>) -> Result<axum::response::Response> {
+    let filepath = PREVIEW_FILE_PATH.lock().map_err(|e| anyerr!("failed to lock: {e:?}"))?;
+    let filepath = filepath.as_ref().ok_or(anyerr!("no previewed file"))?;
+    let filepath = Path::new(filepath).canonicalize()
+        .map_err(|e| anyerr!("failed to canonicalize filepath: {e:?}"))?;
+    let mut preview_file = File::open(&filepath)
+        .map_err(|e| anyerr!("failed to open file {} with error: {e:?}", filepath.display()))?;
+    let mut content = String::new();
+    _ = preview_file.read_to_string(&mut content);
+
+    let filedir = filepath.parent().ok_or(anyerr!("preview file has no parent directory"))?;
+    let workdir = tempfile::tempdir().map_err(|e| anyerr!("failed to create temporary directory: {e:?}"))?;
+    let page = Page::new(content);
+    let hook = |node: &Node| {
+        let mut nodedata = node.data.borrow_mut();
+        if nodedata.tag.name == NodeTagName::Image {
+            let src = nodedata.tag.attrs.get("src").unwrap_or(&"".to_owned()).to_owned();
+            let name = nodedata.tag.attrs.get("name").unwrap_or(&"".to_owned()).to_owned();
+            let mut imgpath = Path::new(&src).to_path_buf();
+            if src.starts_with("https://") || src.starts_with("http://") {
+                imgpath = concisemark::utils::download_image_fs(&src, workdir.path(), name).unwrap();
+            } else {
+                if filedir.join(&src).exists() {
+                    imgpath = filedir.join(&src);
+                }
+            }
+            nodedata.tag.attrs.insert("src".to_owned(), format!("{}", imgpath.display()));
+        }
+    };
+    page.transform(hook);
+
+    let latex = page.render_latex();
+    let texfile = workdir.path().join("output.tex");
+    let mut f = OpenOptions::new().truncate(true).write(true).create(true).open(&texfile).map_err(|e| anyerr!("failed to open texfile to write: {e:?}"))?;
+    f.write(latex.as_bytes()).map_err(|e| anyerr!("failed to write texfile: {e:?}"))?;
+    let mut cmd = Command::new("xelatex");
+    cmd.current_dir(&workdir);
+    cmd.arg(&texfile);
+    cmd.output().map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
+    let pdffile = workdir.path().join("output.pdf");
+    let mut f = File::open(pdffile).map_err(|e| anyerr!("failed to open rendered file: {e:?}"))?;
+    let mut pdfbuf = vec![];
+    _ = f.read_to_end(&mut pdfbuf);
+    log::info!("render latex is done: {}", workdir.path().display());
+
+    Ok(Response::builder().status(StatusCode::OK)
+        .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("application/pdf").map_err(|e| anyerr!("failed to parse pdf mime: {e:?}"))?)
+        .body(axum::body::boxed(axum::body::Full::from(pdfbuf)))
+        .map_err(|e| anyerr!("failed to create pdf response body: {e:?}"))?)
 }
 
 async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl IntoResponse {
@@ -182,6 +241,7 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" onload="renderMathInElement(document.body);"> </script>
             </head>
             <body class="nvim-previewer">
+                <a href="/pdf">Download as PDF</a>
                 <article class="markdown-body">
                     {body}
                 </article>
@@ -307,7 +367,9 @@ impl Previewer {
 
     fn preview(&self, params: Vec<Value>) -> Result<()> {
         let mut path = PREVIEW_FILE_PATH.lock().unwrap();
-        *path = params.get(0).context("file path is not provided")?.as_str().map(|v| v.to_owned());
+        *path = params.get(0)
+            .ok_or(anyerr!("file path is not provided"))?
+            .as_str().map(|v| v.to_owned());
 
         let url = format!("http://{DEFUALT_HOST}:{}", self.config.port);
         let r = if let Some(browser) = &self.config.browser {
