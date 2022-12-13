@@ -1063,3 +1063,20 @@
     border-radius: 25px;
     border: 2px solid #73AD21;
 }
+
+.menu-bar {
+  overflow: hidden;
+}
+
+.right-menu {
+  float: right;
+}
+
+.right-menu a {
+  float: left;
+  color: #f2f2f2;
+  text-align: center;
+  padding: 14px 16px;
+  text-decoration: none;
+  font-size: 17px;
+}

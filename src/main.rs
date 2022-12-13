@@ -129,7 +129,12 @@ async fn file(Extension(config): Extension<Arc<PreviewerConfig>>, filemeta: Quer
         .unwrap()
 }
 
-async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>) -> Result<axum::response::Response> {
+#[derive(Deserialize)]
+struct PDFOptions {
+    is_source: Option<bool>,
+}
+
+async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, options: Query<PDFOptions>) -> Result<axum::response::Response> {
     let filepath = PREVIEW_FILE_PATH.lock().map_err(|e| anyerr!("failed to lock: {e:?}"))?;
     let filepath = filepath.as_ref().ok_or(anyerr!("no previewed file"))?;
     let filepath = Path::new(filepath).canonicalize()
@@ -164,6 +169,16 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>) -> Re
     let texfile = workdir.path().join("output.tex");
     let mut f = OpenOptions::new().truncate(true).write(true).create(true).open(&texfile).map_err(|e| anyerr!("failed to open texfile to write: {e:?}"))?;
     f.write(latex.as_bytes()).map_err(|e| anyerr!("failed to write texfile: {e:?}"))?;
+
+    if let Some(is_source) = options.is_source {
+        if is_source {
+            return Ok(Response::builder().status(StatusCode::OK)
+                .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/plain; charset=utf-8").map_err(|e| anyerr!("failed to parse text/plain mime: {e:?}"))?)
+                .body(axum::body::boxed(axum::body::Full::from(latex)))
+                .map_err(|e| anyerr!("failed to create pdf source response body: {e:?}"))?)
+        }
+    }
+
     let mut cmd = Command::new("xelatex");
     cmd.current_dir(&workdir);
     cmd.arg(&texfile);
@@ -173,7 +188,6 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>) -> Re
     let mut pdfbuf = vec![];
     _ = f.read_to_end(&mut pdfbuf);
     log::info!("render latex is done: {}", workdir.path().display());
-
     Ok(Response::builder().status(StatusCode::OK)
         .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("application/pdf").map_err(|e| anyerr!("failed to parse pdf mime: {e:?}"))?)
         .body(axum::body::boxed(axum::body::Full::from(pdfbuf)))
@@ -241,7 +255,12 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" onload="renderMathInElement(document.body);"> </script>
             </head>
             <body class="nvim-previewer">
-                <a href="/pdf">Download as PDF</a>
+                <div class="menu-bar">
+                    <div class="right-menu">
+                        <a href="/pdf">View as PDF</a>
+                        <a href="/pdf?is_source=true">Download PDF Source</a>
+                    </div>
+                </div>
                 <article class="markdown-body">
                     {body}
                 </article>
