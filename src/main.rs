@@ -1,6 +1,7 @@
 mod error;
 
 use error::Result;
+use error::Error;
 
 use std::fmt::Display;
 use std::fs::File;
@@ -179,13 +180,15 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, optio
                         let mut pdfpath = imgpath.clone();
                         pdfpath.set_extension("pdf");
                         let mut cmd = Command::new("rsvg-convert");
-                        if let Err(e) = cmd.arg(format!("{}", imgpath.display()))
+                        let output = cmd.arg(format!("{}", imgpath.display()))
                             .arg("-o")
                             .arg(format!("{}", pdfpath.display()))
                             .arg("-f")
                             .arg("Pdf")
-                            .output() {
-                            log::error!("failed to run rsvg-convert: {e:?}");
+                            .output().map_err(|e| anyerr!("failed to run rsvg-convert: {e:?}"))?;
+                        if !output.status.success() {
+                             let errmsg = String::from_utf8(output.stderr).unwrap_or("failed to run".to_owned());
+                            log::error!("rsvg-convert exit with error: {errmsg}");
                         }
                         imgpath = pdfpath
                     }
@@ -207,7 +210,11 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, optio
         let mut cmd = Command::new("xelatex");
         cmd.current_dir(&workdir);
         cmd.arg(&texfile);
-        cmd.output().map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
+        let output = cmd.output().map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
+        if !output.status.success() {
+            let errmsg = String::from_utf8(output.stdout).unwrap_or("failed to compile".to_owned());
+            return Err(Error::Other(anyerr!("xelatex exit with error: {errmsg}")));
+        }
         let pdffile = workdir.path().join("output.pdf");
         let mut f = File::open(pdffile).map_err(|e| anyerr!("failed to open rendered file: {e:?}"))?;
         let mut pdfbuf = vec![];
