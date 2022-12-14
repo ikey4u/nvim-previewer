@@ -135,6 +135,8 @@ struct PDFOptions {
 }
 
 async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, options: Query<PDFOptions>) -> Result<axum::response::Response> {
+    let enable_compile = options.is_source.is_none();
+
     let filepath = PREVIEW_FILE_PATH.lock().map_err(|e| anyerr!("failed to lock: {e:?}"))?;
     let filepath = filepath.as_ref().ok_or(anyerr!("no previewed file"))?;
     let filepath = Path::new(filepath).canonicalize()
@@ -147,21 +149,52 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, optio
     let filedir = filepath.parent().ok_or(anyerr!("preview file has no parent directory"))?;
     let workdir = tempfile::tempdir().map_err(|e| anyerr!("failed to create temporary directory: {e:?}"))?;
     let page = Page::new(content);
-    let hook = |node: &Node| {
+    let hook = |node: &Node| -> Result<()> {
         let mut nodedata = node.data.borrow_mut();
         if nodedata.tag.name == NodeTagName::Image {
-            let src = nodedata.tag.attrs.get("src").unwrap_or(&"".to_owned()).to_owned();
+            let src = nodedata.tag.attrs.get("src").ok_or(anyerr!("image source is empty"))?;
             let name = nodedata.tag.attrs.get("name").unwrap_or(&"".to_owned()).to_owned();
             let mut imgpath = Path::new(&src).to_path_buf();
             if src.starts_with("https://") || src.starts_with("http://") {
-                imgpath = concisemark::utils::download_image_fs(&src, workdir.path(), name).unwrap();
+                if !filedir.join(&name).exists() {
+                    imgpath = concisemark::utils::download_image_fs(&src, filedir, &name).ok_or(
+                        anyerr!("failed to download media file {name}")
+                    )?;
+                }
             } else {
                 if filedir.join(&src).exists() {
                     imgpath = filedir.join(&src);
                 }
             }
+
+            if enable_compile {
+                // Latex cannot embed svg image directly, we must convert svg to pdf.
+                //
+                // Note that if svg is generated from drawio, then you must disable `Word Wrap` and
+                // `Formatted Text` or else your PDF will have an annoying message
+                // `Text is not SVG - cannot display`, see [here](https://www.diagrams.net/doc/faq/svg-export-text-problems)
+                // for detail.
+                if let Some(imgext) = imgpath.extension() {
+                    if imgext == "svg" {
+                        let mut pdfpath = imgpath.clone();
+                        pdfpath.set_extension("pdf");
+                        let mut cmd = Command::new("rsvg-convert");
+                        if let Err(e) = cmd.arg(format!("{}", imgpath.display()))
+                            .arg("-o")
+                            .arg(format!("{}", pdfpath.display()))
+                            .arg("-f")
+                            .arg("Pdf")
+                            .output() {
+                            log::error!("failed to run rsvg-convert: {e:?}");
+                        }
+                        imgpath = pdfpath
+                    }
+                }
+            }
+
             nodedata.tag.attrs.insert("src".to_owned(), format!("{}", imgpath.display()));
         }
+        Ok(())
     };
     page.transform(hook);
 
@@ -170,28 +203,26 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, optio
     let mut f = OpenOptions::new().truncate(true).write(true).create(true).open(&texfile).map_err(|e| anyerr!("failed to open texfile to write: {e:?}"))?;
     f.write(latex.as_bytes()).map_err(|e| anyerr!("failed to write texfile: {e:?}"))?;
 
-    if let Some(is_source) = options.is_source {
-        if is_source {
-            return Ok(Response::builder().status(StatusCode::OK)
-                .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/plain; charset=utf-8").map_err(|e| anyerr!("failed to parse text/plain mime: {e:?}"))?)
-                .body(axum::body::boxed(axum::body::Full::from(latex)))
-                .map_err(|e| anyerr!("failed to create pdf source response body: {e:?}"))?)
-        }
+    if enable_compile {
+        let mut cmd = Command::new("xelatex");
+        cmd.current_dir(&workdir);
+        cmd.arg(&texfile);
+        cmd.output().map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
+        let pdffile = workdir.path().join("output.pdf");
+        let mut f = File::open(pdffile).map_err(|e| anyerr!("failed to open rendered file: {e:?}"))?;
+        let mut pdfbuf = vec![];
+        _ = f.read_to_end(&mut pdfbuf);
+        log::info!("render latex is done: {}", workdir.path().display());
+        Ok(Response::builder().status(StatusCode::OK)
+            .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("application/pdf").map_err(|e| anyerr!("failed to parse pdf mime: {e:?}"))?)
+            .body(axum::body::boxed(axum::body::Full::from(pdfbuf)))
+            .map_err(|e| anyerr!("failed to create pdf response body: {e:?}"))?)
+    } else {
+         Ok(Response::builder().status(StatusCode::OK)
+            .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/plain; charset=utf-8").map_err(|e| anyerr!("failed to parse text/plain mime: {e:?}"))?)
+            .body(axum::body::boxed(axum::body::Full::from(latex)))
+            .map_err(|e| anyerr!("failed to create pdf source response body: {e:?}"))?) 
     }
-
-    let mut cmd = Command::new("xelatex");
-    cmd.current_dir(&workdir);
-    cmd.arg(&texfile);
-    cmd.output().map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
-    let pdffile = workdir.path().join("output.pdf");
-    let mut f = File::open(pdffile).map_err(|e| anyerr!("failed to open rendered file: {e:?}"))?;
-    let mut pdfbuf = vec![];
-    _ = f.read_to_end(&mut pdfbuf);
-    log::info!("render latex is done: {}", workdir.path().display());
-    Ok(Response::builder().status(StatusCode::OK)
-        .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("application/pdf").map_err(|e| anyerr!("failed to parse pdf mime: {e:?}"))?)
-        .body(axum::body::boxed(axum::body::Full::from(pdfbuf)))
-        .map_err(|e| anyerr!("failed to create pdf response body: {e:?}"))?)
 }
 
 async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl IntoResponse {
@@ -208,7 +239,7 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 let mut content = String::new();
                 _ = f.read_to_string(&mut content);
                 let page = Page::new(content);
-                let hook = |node: &Node| {
+                let hook = |node: &Node| -> Result<()> {
                     let mut nodedata = node.data.borrow_mut();
                     if nodedata.tag.name == NodeTagName::Image {
                         let src = if let Some(src) = nodedata.tag.attrs.get("src") {
@@ -226,6 +257,7 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                             nodedata.tag.attrs.insert("src".to_owned(), src);
                         }
                     }
+                    Ok(())
                 };
                 page.transform(hook);
                 page.render()
@@ -258,7 +290,7 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 <div class="menu-bar">
                     <div class="right-menu">
                         <a href="/pdf">View as PDF</a>
-                        <a href="/pdf?is_source=true">Download PDF Source</a>
+                        <a href="/pdf?is_source=true">View Latex Source</a>
                     </div>
                 </div>
                 <article class="markdown-body">

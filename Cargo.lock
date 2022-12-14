@@ -181,9 +181,7 @@ dependencies = [
 
 [[package]]
 name = "concisemark"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fd53740ce7710cee3e9e5a10502ff213d8472810267d9971a9183294cecfb14"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",

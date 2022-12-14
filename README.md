@@ -31,6 +31,17 @@ To cutmoize the broswer and listening port, using these options
 
 Run `:Preview` in your markdown file, and you are done.
 
+Note that nvim-previewer supports exporting markdown to latex source, and compile the latex source
+to PDF document (depends on latex).
+
+To compile the latex source to PDF file, you should install [texlive](https://www.tug.org/texlive/)
+and [rsvg-convert](https://gitlab.gnome.org/GNOME/librsvg). If you have cargo installed, you can
+install rsvg-convert using the following command
+
+    cargo install --git https://gitlab.gnome.org/GNOME/librsvg.git --tag 2.55.90
+
+If you just want to get the latex source, then texlive and rsvg-convert are not required.
+
 ## Logs
 
 Log files are stored into `nvim-previewer` directory under the cache directory of neovim (get it
