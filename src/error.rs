@@ -1,5 +1,4 @@
-use axum::response::IntoResponse;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -27,6 +26,7 @@ macro_rules! anyerr {
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        (axum::http::status::StatusCode::OK, format!("{self:?}")).into_response()
+        (axum::http::status::StatusCode::OK, format!("{self:?}"))
+            .into_response()
     }
 }

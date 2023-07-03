@@ -1,10 +1,12 @@
-use std::{io::{Read, Write, BufReader, BufWriter}, sync::{mpsc, Arc, Mutex}, collections::HashMap};
-
-use crate::{Result, Error};
-use crate::Value;
-use crate::rpc::Message;
+use std::{
+    collections::HashMap,
+    io::{BufReader, BufWriter, Read, Write},
+    sync::{mpsc, Arc, Mutex},
+};
 
 use errlog::logmsg;
+
+use crate::{rpc::Message, Error, Result, Value};
 
 include!(concat!(env!("OUT_DIR"), concat!("/", "nvim_api.rs")));
 
@@ -32,38 +34,58 @@ impl<R: Read + Send + 'static, W: Write + Send + 'static> Client<R, W> {
         let writer = self.writer.clone();
         let senders = self.tasks.clone();
 
-        std::thread::spawn(move || {
-            loop {
-                let reader = &mut *reader.lock().unwrap();
-                match Message::read_from(reader) {
-                    Ok(Message::Request { msgid, method, params }) => {
-                        logmsg!(DEBUG, "RpcRequest: {method}");
-                        let resp = Message::Response { msgid, result: Value::Nil, error: Value::Nil };
-                        let writer = &mut *writer.lock().unwrap();
-                        resp.write_to(writer).expect("failed to send response");
+        std::thread::spawn(move || loop {
+            let reader = &mut *reader.lock().unwrap();
+            match Message::read_from(reader) {
+                Ok(Message::Request {
+                    msgid,
+                    method,
+                    params,
+                }) => {
+                    logmsg!(DEBUG, "RpcRequest: {method}");
+                    let resp = Message::Response {
+                        msgid,
+                        result: Value::Nil,
+                        error: Value::Nil,
+                    };
+                    let writer = &mut *writer.lock().unwrap();
+                    resp.write_to(writer).expect("failed to send response");
+                }
+                Ok(Message::Response {
+                    msgid,
+                    error,
+                    result,
+                }) => {
+                    logmsg!(
+                        DEBUG,
+                        "RpcResponse: {:?}, result {:?}",
+                        error,
+                        result
+                    );
+                    let sender =
+                        senders.lock().unwrap().remove(&msgid).unwrap();
+                    let r = if error != Value::Nil {
+                        sender.send(Err(Error::Dirty(format!("{error:?}"))))
+                    } else {
+                        sender.send(Ok(result))
+                    };
+                    if let Err(e) = r {
+                        logmsg!(ERROR, "cannot reply to RpcResponse: {:?}", e)
                     }
-                    Ok(Message::Response { msgid, error, result }) => {
-                        logmsg!(DEBUG, "RpcResponse: {:?}, result {:?}", error, result);
-                        let sender = senders.lock().unwrap().remove(&msgid).unwrap();
-                        let r = if error != Value::Nil {
-                            sender.send(Err(Error::Dirty(format!("{error:?}"))))
-                        } else {
-                            sender.send(Ok(result))
-                        };
-                        if let Err(e) = r {
-                            logmsg!(ERROR, "cannot reply to RpcResponse: {:?}", e)
-                        }
+                }
+                Ok(Message::Notify { method, params }) => {
+                    logmsg!(DEBUG, "RpcNotify: {} {:?}", method, params);
+                    if let Err(e) = tx.send((method, params)) {
+                        logmsg!(
+                            ERROR,
+                            "failed to transmit notifications: {:?}",
+                            e
+                        );
                     }
-                    Ok(Message::Notify { method, params }) => {
-                        logmsg!(DEBUG, "RpcNotify: {} {:?}", method, params);
-                        if let Err(e) = tx.send((method, params)) {
-                            logmsg!(ERROR, "failed to transmit notifications: {:?}", e);
-                        }
-                    }
-                    Err(e) => {
-                        logmsg!(ERROR, "read error: {:?}", e);
-                        break;
-                    }
+                }
+                Err(e) => {
+                    logmsg!(ERROR, "read error: {:?}", e);
+                    break;
                 }
             }
         });

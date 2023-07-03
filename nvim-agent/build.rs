@@ -3,14 +3,11 @@
 /// This build script will run `nvim --api-info` to get api-metadata from nvim whose format is
 /// msgpack, and then we unpack the data using rmpv_serde. You can have a look at
 /// `assets/nvim-api-info.json5` for references.
-
 use std::process::Command;
-use std::fs::File;
-use std::path::Path;
-use std::io::Write;
+use std::{fs::File, io::Write, path::Path};
 
-use quote::{quote, format_ident};
 use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
 
 // This function is used to print message to console in build.rs script, it should be only used for
 // debugging purpose. Note that only single line message is valid, message which contains newline
@@ -23,8 +20,9 @@ fn cargo_print<S: AsRef<str>>(msg: S) {
 // neovim's api metadata stuffs in rust representation
 mod nvim {
     use std::collections::HashMap;
+
     use proc_macro2::TokenStream;
-    use quote::{quote, format_ident, ToTokens};
+    use quote::{format_ident, quote, ToTokens};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -117,7 +115,8 @@ mod nvim {
             for arg in func.parameters.iter() {
                 let (vartype, varname) = (arg[0].clone(), arg[1].clone());
                 let varname = format_ident!("arg_{}", varname);
-                parameters.push((quote!(#varname), parse_vartype(vartype.as_str())));
+                parameters
+                    .push((quote!(#varname), parse_vartype(vartype.as_str())));
             }
 
             let return_type = parse_vartype(func.return_type.as_str());
@@ -134,7 +133,7 @@ mod nvim {
         pub fn is_ext_function(&self, func: &Function) -> bool {
             for typ in self.types.values() {
                 if func.name.starts_with(typ.prefix.as_str()) {
-                    return true
+                    return true;
                 }
             }
             false
@@ -145,7 +144,7 @@ mod nvim {
         pub fn generate_trait_method_decl(&self) -> TokenStream {
             let func_stream = FunctionTokenStream::new(&self);
             let func_args = func_stream.parameters.iter().map(|(arg, typ)| {
-                quote!{ #arg : #typ }
+                quote! { #arg : #typ }
             });
             let func_name = func_stream.name;
             let func_ret = func_stream.return_type;
@@ -360,7 +359,7 @@ pub fn main() {
                 continue;
             }
             let method_decl = func.generate_trait_method_decl();
-            global_api_trait_methods.extend(quote::quote!{ #method_decl; });
+            global_api_trait_methods.extend(quote::quote! { #method_decl; });
         }
         quote! {
             pub trait NeovimApi {
@@ -386,13 +385,20 @@ pub fn main() {
     };
     code_stream.extend(neovim_api_trait_impl);
 
-    let extmap = vec![("Buffer", "nvim_buf_"), ("Window", "nvim_win_"), ("Tabpage", "nvim_tabpage_")];
+    let extmap = vec![
+        ("Buffer", "nvim_buf_"),
+        ("Window", "nvim_win_"),
+        ("Tabpage", "nvim_tabpage_"),
+    ];
     for (typ, prefix) in extmap {
         let neovim_ext_api = {
             let mut stream = TokenStream::new();
             for func in api.functions.iter() {
                 // TODO(2022-05-19): support function such as `nvim_buf_call([["Buffer", "buffer"], ["LuaRef", "fun"]])` and deprecated api
-                if func.name == "nvim_buf_call" || func.name == "nvim_win_call" || func.deprecated_since.is_some() {
+                if func.name == "nvim_buf_call"
+                    || func.name == "nvim_win_call"
+                    || func.deprecated_since.is_some()
+                {
                     continue;
                 }
                 if api.is_ext_function(&func) && func.name.starts_with(prefix) {
@@ -412,14 +418,17 @@ pub fn main() {
         code_stream.extend(neovim_ext_api_impl);
     }
 
-    let ast: syn::File = syn::parse2(code_stream).expect("not a valid tokenstream");
+    let ast: syn::File =
+        syn::parse2(code_stream).expect("not a valid tokenstream");
     let code = prettyplease::unparse(&ast);
     let mut buf = String::new();
     buf.push_str(&code);
 
     let outdir = std::env::var("OUT_DIR").unwrap();
     let outfile = Path::new(outdir.as_str()).join("nvim_api.rs");
-    let mut f = File::create(outfile.as_path()).expect("failed to create nvim_api.rs");
-    f.write_all(buf.as_bytes()).expect("failed to write nvim_api.rs");
+    let mut f =
+        File::create(outfile.as_path()).expect("failed to create nvim_api.rs");
+    f.write_all(buf.as_bytes())
+        .expect("failed to write nvim_api.rs");
     cargo_print(format!("nvim_api.rs: {}", outfile.display()));
 }

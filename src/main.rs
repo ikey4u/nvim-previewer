@@ -1,44 +1,38 @@
 mod error;
 
-use error::Result;
-use error::Error;
+use std::{
+    cell::RefCell,
+    fmt::Display,
+    fs::{File, OpenOptions},
+    io::{Read, Write},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{mpsc::Receiver, Arc, Mutex},
+};
 
-use std::fmt::Display;
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::Read;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::Arc;
-use std::sync::mpsc::Receiver;
-use std::cell::RefCell;
-use std::net::SocketAddr;
-use std::process::Command;
-
-use axum::response::Response;
-use axum::response::IntoResponse;
-use axum::extract::Extension;
-use axum::extract::Query;
-use axum::http;
-use axum::http::status::StatusCode;
-use concisemark::Page;
-use concisemark::node::Node;
-use concisemark::node::NodeTagName;
-use nvim_agent::Value;
-use nvim_agent::NeovimClient;
+use axum::{
+    extract::{Extension, Query},
+    http,
+    http::status::StatusCode,
+    response::{IntoResponse, Response},
+};
+use concisemark::{
+    node::{Node, NodeTagName},
+    Page,
+};
+use error::{Error, Result};
+use nvim_agent::{NeovimClient, Value};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use tracing_subscriber::fmt::writer::MakeWriter;
-use once_cell::sync::Lazy;
 
 const DEFAULT_PORT: u16 = 3008;
 const DEFUALT_HOST: &'static str = "127.0.0.1";
 const PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
-static PREVIEW_FILE_PATH: Lazy<Arc<Mutex<Option<String>>>> = Lazy::new(|| {
-    Arc::new(Mutex::new(None))
-});
+static PREVIEW_FILE_PATH: Lazy<Arc<Mutex<Option<String>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(None)));
 
 #[derive(Deserialize)]
 enum FileTag {
@@ -76,7 +70,8 @@ fn server(config: PreviewerConfig) -> Result<()> {
             .layer(Extension(config));
         axum::Server::bind(&addr)
             .serve(app.into_make_service())
-            .await.unwrap();
+            .await
+            .unwrap();
     });
     log::info!("web server exit with result: {r:?}");
     Ok(())
@@ -84,28 +79,37 @@ fn server(config: PreviewerConfig) -> Result<()> {
 
 async fn fallback(uri: http::Uri) -> impl IntoResponse {
     let (status, mime, content) = match uri.to_string().as_str() {
-        "/favicon.ico" => {
-            (StatusCode::OK, "image/x-icon", include_bytes!("static/favicon.ico").to_vec())
-        }
+        "/favicon.ico" => (
+            StatusCode::OK,
+            "image/x-icon",
+            include_bytes!("static/favicon.ico").to_vec(),
+        ),
         _ => {
             log::warn!("unknown uri: {uri}");
-            (StatusCode::NOT_FOUND, "text/plain", format!("No route for {uri}").as_bytes().to_vec())
+            (
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                format!("No route for {uri}").as_bytes().to_vec(),
+            )
         }
     };
-    Response::builder().status(status)
-        .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str(mime).unwrap())
+    Response::builder()
+        .status(status)
+        .header(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_str(mime).unwrap(),
+        )
         .body(axum::body::boxed(axum::body::Full::from(content)))
         .unwrap()
 }
 
-async fn file(Extension(config): Extension<Arc<PreviewerConfig>>, filemeta: Query<FileMeta>) -> impl IntoResponse {
+async fn file(
+    Extension(config): Extension<Arc<PreviewerConfig>>,
+    filemeta: Query<FileMeta>,
+) -> impl IntoResponse {
     let filepath = match filemeta.tag {
-        FileTag::CSS => {
-            config.css_file.as_path()
-        }
-        FileTag::JS => {
-           config.js_file.as_path()
-        }
+        FileTag::CSS => config.css_file.as_path(),
+        FileTag::JS => config.js_file.as_path(),
         FileTag::Path => {
             if let Some(val) = filemeta.val.as_deref() {
                 Path::new(val)
@@ -122,10 +126,16 @@ async fn file(Extension(config): Extension<Arc<PreviewerConfig>>, filemeta: Quer
     }
     if content.len() == 0 {
         mime = "text/plain";
-        content.extend_from_slice(format!("can not read file: {}", filepath.display()).as_bytes());
+        content.extend_from_slice(
+            format!("can not read file: {}", filepath.display()).as_bytes(),
+        );
     }
-    Response::builder().status(StatusCode::OK)
-        .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str(mime).unwrap())
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_str(mime).unwrap(),
+        )
         .body(axum::body::boxed(axum::body::Full::from(content)))
         .unwrap()
 }
@@ -135,32 +145,55 @@ struct PDFOptions {
     is_source: Option<bool>,
 }
 
-async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, options: Query<PDFOptions>) -> Result<axum::response::Response> {
+async fn render_as_pdf(
+    Extension(config): Extension<Arc<PreviewerConfig>>,
+    options: Query<PDFOptions>,
+) -> Result<axum::response::Response> {
     let enable_compile = options.is_source.is_none();
 
-    let filepath = PREVIEW_FILE_PATH.lock().map_err(|e| anyerr!("failed to lock: {e:?}"))?;
+    let filepath = PREVIEW_FILE_PATH
+        .lock()
+        .map_err(|e| anyerr!("failed to lock: {e:?}"))?;
     let filepath = filepath.as_ref().ok_or(anyerr!("no previewed file"))?;
-    let filepath = Path::new(filepath).canonicalize()
+    let filepath = Path::new(filepath)
+        .canonicalize()
         .map_err(|e| anyerr!("failed to canonicalize filepath: {e:?}"))?;
-    let mut preview_file = File::open(&filepath)
-        .map_err(|e| anyerr!("failed to open file {} with error: {e:?}", filepath.display()))?;
+    let mut preview_file = File::open(&filepath).map_err(|e| {
+        anyerr!(
+            "failed to open file {} with error: {e:?}",
+            filepath.display()
+        )
+    })?;
     let mut content = String::new();
     _ = preview_file.read_to_string(&mut content);
 
-    let filedir = filepath.parent().ok_or(anyerr!("preview file has no parent directory"))?;
-    let workdir = tempfile::tempdir().map_err(|e| anyerr!("failed to create temporary directory: {e:?}"))?;
+    let filedir = filepath
+        .parent()
+        .ok_or(anyerr!("preview file has no parent directory"))?;
+    let workdir = tempfile::tempdir()
+        .map_err(|e| anyerr!("failed to create temporary directory: {e:?}"))?;
     let page = Page::new(content);
     let hook = |node: &Node| -> Result<()> {
         let mut nodedata = node.data.borrow_mut();
         if nodedata.tag.name == NodeTagName::Image {
-            let src = nodedata.tag.attrs.get("src").ok_or(anyerr!("image source is empty"))?;
-            let name = nodedata.tag.attrs.get("name").unwrap_or(&"".to_owned()).to_owned();
+            let src = nodedata
+                .tag
+                .attrs
+                .get("src")
+                .ok_or(anyerr!("image source is empty"))?;
+            let name = nodedata
+                .tag
+                .attrs
+                .get("name")
+                .unwrap_or(&"".to_owned())
+                .to_owned();
             let mut imgpath = Path::new(&src).to_path_buf();
             if src.starts_with("https://") || src.starts_with("http://") {
                 if !filedir.join(&name).exists() {
-                    imgpath = concisemark::utils::download_image_fs(&src, filedir, &name).ok_or(
-                        anyerr!("failed to download media file {name}")
-                    )?;
+                    imgpath = concisemark::utils::download_image_fs(
+                        &src, filedir, &name,
+                    )
+                    .ok_or(anyerr!("failed to download media file {name}"))?;
                 }
             } else {
                 if filedir.join(&src).exists() {
@@ -180,22 +213,32 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, optio
                         let mut pdfpath = imgpath.clone();
                         pdfpath.set_extension("pdf");
                         let mut cmd = Command::new("rsvg-convert");
-                        let output = cmd.arg(format!("{}", imgpath.display()))
+                        let output = cmd
+                            .arg(format!("{}", imgpath.display()))
                             .arg("-o")
                             .arg(format!("{}", pdfpath.display()))
                             .arg("-f")
                             .arg("Pdf")
-                            .output().map_err(|e| anyerr!("failed to run rsvg-convert: {e:?}"))?;
+                            .output()
+                            .map_err(|e| {
+                                anyerr!("failed to run rsvg-convert: {e:?}")
+                            })?;
                         if !output.status.success() {
-                             let errmsg = String::from_utf8(output.stderr).unwrap_or("failed to run".to_owned());
-                            log::error!("rsvg-convert exit with error: {errmsg}");
+                            let errmsg = String::from_utf8(output.stderr)
+                                .unwrap_or("failed to run".to_owned());
+                            log::error!(
+                                "rsvg-convert exit with error: {errmsg}"
+                            );
                         }
                         imgpath = pdfpath
                     }
                 }
             }
 
-            nodedata.tag.attrs.insert("src".to_owned(), format!("{}", imgpath.display()));
+            nodedata
+                .tag
+                .attrs
+                .insert("src".to_owned(), format!("{}", imgpath.display()));
         }
         Ok(())
     };
@@ -203,45 +246,71 @@ async fn render_as_pdf(Extension(config): Extension<Arc<PreviewerConfig>>, optio
 
     let latex = page.render_latex();
     let texfile = workdir.path().join("output.tex");
-    let mut f = OpenOptions::new().truncate(true).write(true).create(true).open(&texfile).map_err(|e| anyerr!("failed to open texfile to write: {e:?}"))?;
-    f.write(latex.as_bytes()).map_err(|e| anyerr!("failed to write texfile: {e:?}"))?;
+    let mut f = OpenOptions::new()
+        .truncate(true)
+        .write(true)
+        .create(true)
+        .open(&texfile)
+        .map_err(|e| anyerr!("failed to open texfile to write: {e:?}"))?;
+    f.write(latex.as_bytes())
+        .map_err(|e| anyerr!("failed to write texfile: {e:?}"))?;
 
     if enable_compile {
         let mut cmd = Command::new("xelatex");
         cmd.current_dir(&workdir);
         cmd.arg(&texfile);
-        let output = cmd.output().map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
+        let output = cmd
+            .output()
+            .map_err(|e| anyerr!("failed to compile latex file: {e:?}"))?;
         if !output.status.success() {
-            let errmsg = String::from_utf8(output.stdout).unwrap_or("failed to compile".to_owned());
-            return Err(Error::Other(anyerr!("xelatex exit with error: {errmsg}")));
+            let errmsg = String::from_utf8(output.stdout)
+                .unwrap_or("failed to compile".to_owned());
+            return Err(Error::Other(anyerr!(
+                "xelatex exit with error: {errmsg}"
+            )));
         }
         let pdffile = workdir.path().join("output.pdf");
-        let mut f = File::open(pdffile).map_err(|e| anyerr!("failed to open rendered file: {e:?}"))?;
+        let mut f = File::open(pdffile)
+            .map_err(|e| anyerr!("failed to open rendered file: {e:?}"))?;
         let mut pdfbuf = vec![];
         _ = f.read_to_end(&mut pdfbuf);
         log::info!("render latex is done: {}", workdir.path().display());
-        Ok(Response::builder().status(StatusCode::OK)
-            .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("application/pdf").map_err(|e| anyerr!("failed to parse pdf mime: {e:?}"))?)
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_str("application/pdf")
+                    .map_err(|e| anyerr!("failed to parse pdf mime: {e:?}"))?,
+            )
             .body(axum::body::boxed(axum::body::Full::from(pdfbuf)))
-            .map_err(|e| anyerr!("failed to create pdf response body: {e:?}"))?)
+            .map_err(|e| {
+                anyerr!("failed to create pdf response body: {e:?}")
+            })?)
     } else {
-         Ok(Response::builder().status(StatusCode::OK)
-            .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/plain; charset=utf-8").map_err(|e| anyerr!("failed to parse text/plain mime: {e:?}"))?)
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_str("text/plain; charset=utf-8")
+                    .map_err(|e| {
+                        anyerr!("failed to parse text/plain mime: {e:?}")
+                    })?,
+            )
             .body(axum::body::boxed(axum::body::Full::from(latex)))
-            .map_err(|e| anyerr!("failed to create pdf source response body: {e:?}"))?) 
+            .map_err(|e| {
+                anyerr!("failed to create pdf source response body: {e:?}")
+            })?)
     }
 }
 
-async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl IntoResponse {
+async fn render(
+    Extension(config): Extension<Arc<PreviewerConfig>>,
+) -> impl IntoResponse {
     let html = match PREVIEW_FILE_PATH.lock().unwrap().as_ref() {
         Some(path) => {
             log::info!("start to render file: {path}");
             let path = Path::new(path);
-            let filedir = if let Some(d) = path.parent() {
-                d
-            } else {
-                path
-            };
+            let filedir = if let Some(d) = path.parent() { d } else { path };
             if let Ok(mut f) = File::open(path) {
                 let mut content = String::new();
                 _ = f.read_to_string(&mut content);
@@ -249,11 +318,12 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 let hook = |node: &Node| -> Result<()> {
                     let mut nodedata = node.data.borrow_mut();
                     if nodedata.tag.name == NodeTagName::Image {
-                        let src = if let Some(src) = nodedata.tag.attrs.get("src") {
-                            src.to_owned()
-                        } else {
-                            "".to_owned()
-                        };
+                        let src =
+                            if let Some(src) = nodedata.tag.attrs.get("src") {
+                                src.to_owned()
+                            } else {
+                                "".to_owned()
+                            };
                         let local_filepath = filedir.join(src);
                         if local_filepath.exists() {
                             let src = format!(
@@ -272,11 +342,10 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
                 format!("failed to open file: {}", path.display())
             }
         }
-        None => {
-            "no file to render".to_owned()
-        }
+        None => "no file to render".to_owned(),
     };
-    let html_template = format!(r#"
+    let html_template = format!(
+        r#"
         <!DOCTYPE html>
         <html>
             <head>
@@ -309,8 +378,12 @@ async fn render(Extension(config): Extension<Arc<PreviewerConfig>>) -> impl Into
         title = "Previewer",
         body = html,
     );
-    Response::builder().status(StatusCode::OK)
-        .header(http::header::CONTENT_TYPE, http::HeaderValue::from_str("text/html").unwrap())
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_str("text/html").unwrap(),
+        )
         .body(axum::body::boxed(axum::body::Full::from(html_template)))
         .unwrap()
 }
@@ -348,10 +421,17 @@ impl Display for PreviewerConfig {
 }
 
 impl PreviewerConfig {
-    pub fn new<S1, S2, P1, P2>(browser: S1, port: S2, css_file: P1, js_file: P2) -> Self
+    pub fn new<S1, S2, P1, P2>(
+        browser: S1,
+        port: S2,
+        css_file: P1,
+        js_file: P2,
+    ) -> Self
     where
-        S1: AsRef<str>, S2: AsRef<str>,
-        P1: AsRef<Path>, P2: AsRef<Path>,
+        S1: AsRef<str>,
+        S2: AsRef<str>,
+        P1: AsRef<Path>,
+        P2: AsRef<Path>,
     {
         let (browser, port) = (browser.as_ref().trim(), port.as_ref().trim());
         let mut config = PreviewerConfig::default();
@@ -381,8 +461,10 @@ impl Previewer {
     pub fn new(mut client: NeovimClient) -> Self {
         let receiver = client.start();
 
-        let cachedir = PathBuf::from(client.eval("stdpath('cache')")).join(PKG_NAME);
-        let scriptdir = PathBuf::from(client.eval("g:nvim_previewer_script_dir"));
+        let cachedir =
+            PathBuf::from(client.eval("stdpath('cache')")).join(PKG_NAME);
+        let scriptdir =
+            PathBuf::from(client.eval("g:nvim_previewer_script_dir"));
         let mut css_file = scriptdir.join(format!("{PKG_NAME}.css"));
         let mut js_file = scriptdir.join(format!("{PKG_NAME}.js"));
 
@@ -393,7 +475,10 @@ impl Previewer {
             if user_css_file.exists() {
                 css_file = user_css_file;
             } else {
-                log::warn!("css file {} is not found, fallback to default", css_file.display());
+                log::warn!(
+                    "css file {} is not found, fallback to default",
+                    css_file.display()
+                );
             }
         }
         if !user_js_file.is_empty() {
@@ -401,7 +486,10 @@ impl Previewer {
             if user_js_file.exists() {
                 js_file = user_js_file;
             } else {
-                log::warn!("js file {} is not found, fallback to default", js_file.display());
+                log::warn!(
+                    "js file {} is not found, fallback to default",
+                    js_file.display()
+                );
             }
         }
 
@@ -425,9 +513,11 @@ impl Previewer {
 
     fn preview(&self, params: Vec<Value>) -> Result<()> {
         let mut path = PREVIEW_FILE_PATH.lock().unwrap();
-        *path = params.get(0)
+        *path = params
+            .get(0)
             .ok_or(anyerr!("file path is not provided"))?
-            .as_str().map(|v| v.to_owned());
+            .as_str()
+            .map(|v| v.to_owned());
 
         let url = format!("http://{DEFUALT_HOST}:{}", self.config.port);
         let r = if let Some(browser) = &self.config.browser {
@@ -436,7 +526,9 @@ impl Previewer {
             open::that(url)
         };
         if let Err(e) = r {
-            self.client.borrow_mut().print(format!("failed to start browser: {e:?}"));
+            self.client
+                .borrow_mut()
+                .print(format!("failed to start browser: {e:?}"));
         }
 
         Ok(())
@@ -450,9 +542,15 @@ impl Previewer {
 fn main() {
     let previewer = Previewer::new(nvim_agent::new_client());
 
-    let file_appender = tracing_appender::rolling::daily(previewer.logdir.as_path(), PKG_VERSION);
-    let (non_blocking_appender, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::fmt().with_writer(non_blocking_appender.make_writer()).init();
+    let file_appender = tracing_appender::rolling::daily(
+        previewer.logdir.as_path(),
+        PKG_VERSION,
+    );
+    let (non_blocking_appender, _guard) =
+        tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking_appender.make_writer())
+        .init();
 
     let config = previewer.config.clone();
     std::thread::spawn(move || {
@@ -464,12 +562,10 @@ fn main() {
 
     for (event, params) in previewer.recv() {
         let r = match event.as_str() {
-            "preview" => {
-                previewer.preview(params).map_err(|e| format!("oops, {e:?}"))
-            }
-            _ => {
-                Err("unknown command".to_owned())
-            }
+            "preview" => previewer
+                .preview(params)
+                .map_err(|e| format!("oops, {e:?}")),
+            _ => Err("unknown command".to_owned()),
         };
         if let Err(e) = r {
             previewer.print(e)

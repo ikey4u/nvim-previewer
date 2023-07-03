@@ -3,9 +3,9 @@ mod rpc;
 
 use std::io;
 
+pub use client::NeovimApi;
 use errlog::logmsg;
 pub use rmpv::Value;
-pub use client::NeovimApi;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -44,7 +44,12 @@ impl NeovimClient {
                 v.to_owned()
             }
             Err(e) => {
-                logmsg!(ERROR, "failed to evaluation expresson {} with error {:?}", expr.as_ref(), e);
+                logmsg!(
+                    ERROR,
+                    "failed to evaluation expresson {} with error {:?}",
+                    expr.as_ref(),
+                    e
+                );
                 "".to_owned()
             }
         }
