@@ -2,6 +2,7 @@ mod error;
 
 use std::{
     cell::RefCell,
+    env::var,
     fmt::Display,
     fs::{File, OpenOptions},
     io::{Read, Write},
@@ -529,6 +530,11 @@ impl Previewer {
             self.client
                 .borrow_mut()
                 .print(format!("failed to start browser: {e:?}"));
+            if cfg!(not(target_os = "windows")) && var("DISPLAY").is_err() {
+                self.client
+                    .borrow_mut()
+                    .print("If you are using X11, please check if DISPLAY variable is defined");
+            }
         }
 
         Ok(())
