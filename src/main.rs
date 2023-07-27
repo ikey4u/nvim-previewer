@@ -530,10 +530,13 @@ impl Previewer {
             self.client
                 .borrow_mut()
                 .print(format!("failed to start browser: {e:?}"));
-            if cfg!(not(target_os = "windows")) && var("DISPLAY").is_err() {
+            if cfg!(target_os = "linux") && var("DISPLAY").is_err() {
+                self.client.borrow_mut().print("If you are using X11, please check if DISPLAY variable is defined");
+            }
+            if cfg!(target_os = "macos") {
                 self.client
                     .borrow_mut()
-                    .print("If you are using X11, please check if DISPLAY variable is defined");
+                    .print("You can check if your brower is tagged with attribute com.apple.quarantine, remove it if there is one and reboot your system");
             }
         }
 
