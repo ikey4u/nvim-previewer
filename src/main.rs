@@ -62,9 +62,10 @@ fn server(config: PreviewerConfig) -> Result<()> {
         .enable_all()
         .build()
         .map_err(|e| anyerr!("failed to build runtime: {e:?}"))?;
-    let r = rt.block_on(async {
+    rt.block_on(async {
         let app = axum::Router::new()
             .route("/", axum::routing::get(render))
+            .route("/ping", axum::routing::get(ping))
             .route("/pdf", axum::routing::get(render_as_pdf))
             .route("/file", axum::routing::get(file))
             .fallback(fallback)
@@ -74,8 +75,11 @@ fn server(config: PreviewerConfig) -> Result<()> {
             .await
             .unwrap();
     });
-    log::info!("web server exit with result: {r:?}");
     Ok(())
+}
+
+async fn ping() -> impl IntoResponse {
+    (http::status::StatusCode::OK, "").into_response()
 }
 
 async fn fallback(uri: http::Uri) -> impl IntoResponse {
@@ -125,7 +129,7 @@ async fn file(
     if let Ok(mut f) = File::open(filepath) {
         _ = f.read_to_end(&mut content);
     }
-    if content.len() == 0 {
+    if content.is_empty() {
         mime = "text/plain";
         content.extend_from_slice(
             format!("can not read file: {}", filepath.display()).as_bytes(),
@@ -192,13 +196,13 @@ async fn render_as_pdf(
             if src.starts_with("https://") || src.starts_with("http://") {
                 if !filedir.join(&name).exists() {
                     imgpath = concisemark::utils::download_image_fs(
-                        &src, filedir, &name,
+                        src, filedir, &name,
                     )
                     .ok_or(anyerr!("failed to download media file {name}"))?;
                 }
             } else {
-                if filedir.join(&src).exists() {
-                    imgpath = filedir.join(&src);
+                if filedir.join(src).exists() {
+                    imgpath = filedir.join(src);
                 }
             }
 
@@ -357,11 +361,10 @@ async fn render(
                 <meta name="msapplication-tap-highlight" content="no">
                 <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1">
                 <link rel="stylesheet" type="text/css" href="/file?tag=css">
-                <script src="/file?tag=js"></script>
-
                 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/katex.min.css" integrity="sha384-Juol1FqnotbkyZUT5Z7gUPjQ9gzlwCENvUZTpQBAPxtusdwFLRy382PSDx5UUJ4/" crossorigin="anonymous">
                 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/katex.min.js" integrity="sha384-97gW6UIJxnlKemYavrqDHSX3SiygeOwIZhwyOKRfSaf0JWKRVj9hLASHgFTzT+0O" crossorigin="anonymous"></script>
                 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" onload="renderMathInElement(document.body);"> </script>
+                <script src="/file?tag=js"></script>
             </head>
             <body class="nvim-previewer">
                 <div class="menu-bar">
@@ -379,6 +382,26 @@ async fn render(
         title = "Previewer",
         body = html,
     );
+    let url = css_inline::Url::parse(&format!(
+        "http://{DEFUALT_HOST}:{}",
+        config.port
+    ))
+    .ok();
+    let html_template = tokio::task::spawn_blocking(|| {
+        let inliner = css_inline::CSSInliner::options()
+            .base_url(url)
+            .load_remote_stylesheets(true)
+            .build();
+        match inliner.inline(&html_template) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("failed to inline css style: {e:?}");
+                html_template
+            }
+        }
+    })
+    .await
+    .unwrap();
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -436,7 +459,7 @@ impl PreviewerConfig {
     {
         let (browser, port) = (browser.as_ref().trim(), port.as_ref().trim());
         let mut config = PreviewerConfig::default();
-        if browser.len() > 0 {
+        if !browser.is_empty() {
             config.browser = Some(browser.to_owned());
         }
         if let Ok(v) = port.parse::<u16>() {
@@ -513,12 +536,14 @@ impl Previewer {
     }
 
     fn preview(&self, params: Vec<Value>) -> Result<()> {
-        let mut path = PREVIEW_FILE_PATH.lock().unwrap();
-        *path = params
-            .get(0)
-            .ok_or(anyerr!("file path is not provided"))?
-            .as_str()
-            .map(|v| v.to_owned());
+        {
+            let mut path = PREVIEW_FILE_PATH.lock().unwrap();
+            *path = params
+                .get(0)
+                .ok_or(anyerr!("file path is not provided"))?
+                .as_str()
+                .map(|v| v.to_owned());
+        }
 
         let url = format!("http://{DEFUALT_HOST}:{}", self.config.port);
         let r = if let Some(browser) = &self.config.browser {
@@ -548,7 +573,8 @@ impl Previewer {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let previewer = Previewer::new(nvim_agent::new_client());
 
     let file_appender = tracing_appender::rolling::daily(
@@ -558,6 +584,8 @@ fn main() {
     let (non_blocking_appender, _guard) =
         tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt()
+        .with_line_number(true)
+        .with_ansi(false)
         .with_writer(non_blocking_appender.make_writer())
         .init();
 
@@ -567,6 +595,10 @@ fn main() {
             log::error!("start server failed: {e:?}");
         }
     });
+
+    let pingurl =
+        format!("http://{DEFUALT_HOST}:{}/ping", previewer.config.port);
+    while reqwest::get(&pingurl).await.is_err() {}
     log::info!("server started with configuration: {}", previewer.config);
 
     for (event, params) in previewer.recv() {
