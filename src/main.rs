@@ -12,6 +12,7 @@ use std::{
     sync::{mpsc::Receiver, Arc, Mutex},
 };
 
+use anyhow::Context;
 use axum::{
     extract::{Extension, Query},
     http,
@@ -49,6 +50,26 @@ enum FileTag {
 struct FileMeta {
     tag: FileTag,
     val: Option<String>,
+}
+
+pub fn code_highlight<S1: AsRef<str>, S2: AsRef<str>>(
+    code: S1,
+    typ: Option<S2>,
+) -> Result<String> {
+    let code = code.as_ref();
+    let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
+    let mut syntax = ss.find_syntax_plain_text();
+    if let Some(typ) = typ {
+        if let Some(s) = ss.find_syntax_by_extension(typ.as_ref()) {
+            syntax = s;
+        }
+    };
+    let ts = syntect::highlighting::ThemeSet::load_defaults();
+    let theme = &ts.themes["base16-ocean.dark"];
+    let code =
+        syntect::html::highlighted_html_for_string(code, &ss, syntax, theme)
+            .context("unable to highlighting your code")?;
+    Ok(code)
 }
 
 fn server(config: PreviewerConfig) -> Result<()> {
@@ -311,6 +332,7 @@ async fn render_as_pdf(
 async fn render(
     Extension(config): Extension<Arc<PreviewerConfig>>,
 ) -> impl IntoResponse {
+    let mut meta = None;
     let html = match PREVIEW_FILE_PATH.lock().unwrap().as_ref() {
         Some(path) => {
             log::info!("start to render file: {path}");
@@ -319,7 +341,8 @@ async fn render(
             if let Ok(mut f) = File::open(path) {
                 let mut content = String::new();
                 _ = f.read_to_string(&mut content);
-                let page = Page::new(content);
+                let page = Page::new(&content);
+                meta = page.meta.clone();
                 let hook = |node: &Node| -> Result<()> {
                     let mut nodedata = node.data.borrow_mut();
                     if nodedata.tag.name == NodeTagName::Image {
@@ -342,12 +365,33 @@ async fn render(
                     Ok(())
                 };
                 page.transform(hook);
-                page.render()
+                let hook = |node: &Node| -> Option<String> {
+                    let nodedata = node.data.borrow_mut();
+                    if nodedata.tag.name == NodeTagName::Code {
+                        let (s, e) = (nodedata.range.start, nodedata.range.end);
+                        let code = content[s..e].to_owned();
+                        let code = code.trim_matches(|c| c == '`').trim();
+                        if let Ok(code) = code_highlight(code, None::<&str>) {
+                            return Some(code);
+                        }
+                        return Some(code.to_owned());
+                    }
+                    None
+                };
+                page.render_with_hook(&hook)
             } else {
                 format!("failed to open file: {}", path.display())
             }
         }
         None => "no file to render".to_owned(),
+    };
+    let (title, subtitle, date) = if let Some(meta) = meta {
+        let title = meta.title;
+        let subtitle = meta.subtitle.unwrap_or("".to_owned());
+        let date = format!("{}", meta.date.format("%Y-%m-%d %H:%M:%S"));
+        (title, subtitle, date)
+    } else {
+        ("".to_owned(), "".to_owned(), "".to_owned())
     };
     let html_template = format!(
         r#"
@@ -366,42 +410,60 @@ async fn render(
                 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" onload="renderMathInElement(document.body);"> </script>
                 <script src="/file?tag=js"></script>
             </head>
-            <body class="nvim-previewer">
-                <div class="menu-bar">
-                    <div class="right-menu">
-                        <a href="/pdf">View as PDF</a>
-                        <a href="/pdf?is_source=true">View Latex Source</a>
+            <body>
+                <div class="main">
+                    <div class="menu">
+                        <div class="right-menu">
+                            <a href="/pdf">View as PDF</a>
+                            <a href="/pdf?is_source=true">View Latex Source</a>
+                        </div>
+                    </div>
+                    <div class="article">
+                        <h1 class="article-title">{title}{gap}{subtitle}</h1>
+                        <div class="meta">{date}</div>
+                        <div class="content">{body}</div>
                     </div>
                 </div>
-                <article class="markdown-body">
-                    {body}
-                </article>
             </body>
         </html>
     "#,
-        title = "Previewer",
+        title = title,
+        gap = if subtitle.is_empty() { "" } else { " - " },
+        subtitle = subtitle,
+        date = date,
         body = html,
     );
-    let url = css_inline::Url::parse(&format!(
-        "http://{DEFUALT_HOST}:{}",
-        config.port
-    ))
-    .ok();
-    let html_template = tokio::task::spawn_blocking(|| {
-        let inliner = css_inline::CSSInliner::options()
-            .base_url(url)
-            .load_remote_stylesheets(true)
-            .build();
-        match inliner.inline(&html_template) {
-            Ok(v) => v,
-            Err(e) => {
-                log::error!("failed to inline css style: {e:?}");
-                html_template
-            }
+    let mut is_css_support_inline = true;
+    if let Some(css_file_name) = config.css_file.file_stem() {
+        if css_file_name == "nvim-previewer-github" {
+            log::info!("css inline is disabled");
+            is_css_support_inline = false;
         }
-    })
-    .await
-    .unwrap();
+    }
+    let html_template = if is_css_support_inline {
+        let url = css_inline::Url::parse(&format!(
+            "http://{DEFUALT_HOST}:{}",
+            config.port
+        ))
+        .ok();
+        tokio::task::spawn_blocking(|| {
+            let inliner = css_inline::CSSInliner::options()
+                .base_url(url)
+                .load_remote_stylesheets(true)
+                .build();
+            match inliner.inline(&html_template) {
+                Ok(v) => v,
+                Err(e) => {
+                    log::error!("failed to inline css style: {e:?}");
+                    html_template
+                }
+            }
+        })
+        .await
+        .unwrap()
+    } else {
+        html_template
+    };
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -489,20 +551,24 @@ impl Previewer {
             PathBuf::from(client.eval("stdpath('cache')")).join(PKG_NAME);
         let scriptdir =
             PathBuf::from(client.eval("g:nvim_previewer_script_dir"));
-        let mut css_file = scriptdir.join(format!("{PKG_NAME}.css"));
+        let mut css_file = scriptdir.join(format!("{PKG_NAME}-github.css"));
         let mut js_file = scriptdir.join(format!("{PKG_NAME}.js"));
 
         let user_css_file = client.eval("g:nvim_previewer_css_file");
         let user_js_file = client.eval("g:nvim_previewer_js_file");
         if !user_css_file.is_empty() {
-            let user_css_file = PathBuf::from(user_css_file);
-            if user_css_file.exists() {
-                css_file = user_css_file;
+            if user_css_file == "$WECHAT" {
+                css_file = scriptdir.join(format!("{PKG_NAME}-wechat.css"));
             } else {
-                log::warn!(
-                    "css file {} is not found, fallback to default",
-                    css_file.display()
-                );
+                let user_css_file = PathBuf::from(user_css_file);
+                if user_css_file.exists() {
+                    css_file = user_css_file;
+                } else {
+                    log::warn!(
+                        "css file {} is not found, fallback to default",
+                        css_file.display()
+                    );
+                }
             }
         }
         if !user_js_file.is_empty() {

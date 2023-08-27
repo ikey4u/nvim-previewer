@@ -1,0 +1,90 @@
+.menu {
+  overflow: hidden;
+  color: #000;
+}
+
+.right-menu {
+  float: right;
+}
+
+.right-menu a {
+  float: left;
+  text-align: center;
+  padding: 14px 16px;
+  text-decoration: none;
+  font-size: 17px;
+}
+
+.markdown-body {
+    box-sizing: border-box;
+    min-width: 200px;
+    max-width: 980px;
+    margin: auto;
+    padding: 45px;
+    border-radius: 25px;
+    border: 2px solid #73AD21;
+}
+
+.main {
+  max-width: 677px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.article-title {
+  font-size: 22px;
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+
+.content p {
+  text-align: left;
+  line-height: 1.75;
+  font-family: -apple-system-font, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB, Microsoft YaHei UI, Microsoft YaHei, Arial, sans-serif;
+  font-size: 14px;
+  margin: 1.5em 8px;
+  letter-spacing: 0.1em;
+  color: rgb(63, 63, 63);
+  visibility: visible;
+}
+
+.content h1 {
+  text-align: center;
+  line-height: 1.75;
+  font-family: -apple-system-font, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB, Microsoft YaHei UI, Microsoft YaHei, Arial, sans-serif;
+  font-size: 15.96px;
+  font-weight: bold;
+  display: table;
+  margin: 2em auto 1em;
+  padding: 0px 1em;
+  border-bottom: 2px solid rgb(0, 152, 116);
+  color: rgb(63, 63, 63);
+  visibility: visible;
+}
+
+.content blockquote {
+  text-align: left;
+  line-height: 1.75;
+  font-family: -apple-system-font,BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB , Microsoft YaHei UI , Microsoft YaHei ,Arial,sans-serif;
+  font-size: 14px;
+  font-style: normal;
+  border-left: none;
+  padding: 1em;
+  border-radius: 8px;
+  color: rgba(0,0,0,0.5);
+  background: #f7f7f7;
+  margin: 2em 8px;
+}
+
+.content pre {
+  text-align: left;
+  line-height: 1.5;
+  font-size: 14px;
+  overflow-x: auto;
+  border-radius: 8px;
+  display: -webkit-box;
+  padding: 0.5em 1em 1em;
+  line-height: 1.75;
+  font-family: Menlo, Operator Mono, Consolas, Monaco, monospace;
+  margin: 10px 10px;
+}

@@ -23,3 +23,4 @@ thiserror = "1.0.37"
 tempfile = "3.3.0"
 css-inline = { version = "0.10.4" }
 reqwest = "0.11.20"
+syntect = "5.1.0"

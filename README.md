@@ -20,10 +20,20 @@ To cutmoize the broswer and listening port, using these options
 
     " if not set, the default value is empty
     let g:nvim_previewer_browser = "firefox"
+
     " if not set, the default value is 3008
     let g:nvim_previewer_port = 3008
-    " if not set, use the builtin css file
+
+    " if not set, use the builtin css file ($GITHUB).
+    "
+    " nvim-previewer contains the following builtin theme file which can be
+    " denoted by
+    "
+    "     let g:nvim_previewer_css_file = "$GITHUB"
+    "     let g:nvim_previewer_css_file = "$WECHAT"
+    "
     let g:nvim_previewer_css_file = "/path/to/file.css"
+
     " if not set, use the builtin js file
     let g:nvim_previewer_js_file = "/path/to/file.js"
 
@@ -49,5 +59,9 @@ using `:echo stdpath('cache')`) in daily.
 
 # Screenshots
 
-![dark-theme](docs/imgs/dark-theme.png)
-![light-theme](docs/imgs/light-theme.png)
+- $GITHUB theme screenshot
+
+    ![dark-theme](docs/imgs/dark-theme.png)
+    ![light-theme](docs/imgs/light-theme.png)
+
+- $WECHAT theme screenshot
