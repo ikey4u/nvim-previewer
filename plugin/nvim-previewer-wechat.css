@@ -48,18 +48,43 @@
   visibility: visible;
 }
 
+
+h1 {
+  font-size: 20px;
+}
+
 .content h1 {
+  font-size: 20px;
+}
+
+.content h2 {
+  min-height: 32px;
+  line-height: 28px;
+  border-bottom: solid 1px #000000;
+  color: rgb(0, 0, 0);
+  display: inline-block;
+  border-bottom-width: 3px;
+  border-bottom-style: solid;
+  border-color: rgb(51, 51, 51);
+  padding-top: 5px;
+  padding-right: 0.5em;
+  padding-left: 0.5em;
+  margin-bottom: -3px;
+  font-size: 18px;
+  margin:1em auto;
+  padding: 0.5em 0;
   text-align: center;
-  line-height: 1.75;
-  font-family: -apple-system-font, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB, Microsoft YaHei UI, Microsoft YaHei, Arial, sans-serif;
-  font-size: 15.96px;
-  font-weight: bold;
-  display: table;
-  margin: 2em auto 1em;
-  padding: 0px 1em;
-  border-bottom: 2px solid rgb(0, 152, 116);
-  color: rgb(63, 63, 63);
-  visibility: visible;
+  width: 85%;
+  font-weight: normal;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.content h3 {
+  font-size: 16px;
+  padding-right: 0.5em;
+  padding-left: 0.5em;
 }
 
 .content blockquote {
@@ -69,7 +94,7 @@
   font-size: 14px;
   font-style: normal;
   border-left: none;
-  padding: 1em;
+  padding: 1px;
   border-radius: 8px;
   color: rgba(0,0,0,0.5);
   background: #f7f7f7;
@@ -89,8 +114,27 @@
   margin: 10px 10px;
 }
 
+.content code {
+  margin: 0 0.15em;
+  padding: 0 0.3em;
+  white-space: pre-wrap;
+  border: 1px solid #EAEAEA;
+  background-color: #F8F8F8;
+  border-radius: 3px;
+  display: inline;
+  color: #5a20db;
+}
+
 .content img {
   border-style: none;
   max-width: 100%;
   box-sizing: content-box;
+}
+
+.content li {
+  margin-top: 8px;
+}
+
+.content li:first-child {
+  margin-top: 16px;
 }

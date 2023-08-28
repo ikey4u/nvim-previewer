@@ -15,7 +15,7 @@ anyhow = "1.0.65"
 axum = "0.6"
 tokio = { version = "1.21.2", features = ["full"] }
 once_cell = "1.15.0"
-concisemark = { version = "0.3.1" }
+concisemark = { git = "https://github.com/ikey4u/concisemark.git" }
 open = "5.0"
 serde = { version = "1.0.145", features = ["derive"] }
 mime_guess = "2.0.4"

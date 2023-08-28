@@ -227,6 +227,7 @@ dependencies = [
 [[package]]
 name = "concisemark"
 version = "0.3.1"
+source = "git+https://github.com/ikey4u/concisemark.git#087804737c7832d9b51b06c520f151b5782d494a"
 dependencies = [
  "anyhow",
  "chrono",
