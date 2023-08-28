@@ -83,8 +83,14 @@
   overflow-x: auto;
   border-radius: 8px;
   display: -webkit-box;
-  padding: 0.5em 1em 1em;
+  padding: 1em;
   line-height: 1.75;
   font-family: Menlo, Operator Mono, Consolas, Monaco, monospace;
   margin: 10px 10px;
+}
+
+.content img {
+  border-style: none;
+  max-width: 100%;
+  box-sizing: content-box;
 }
