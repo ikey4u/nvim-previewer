@@ -370,8 +370,12 @@ async fn render(
                     if nodedata.tag.name == NodeTagName::Code {
                         let (s, e) = (nodedata.range.start, nodedata.range.end);
                         let code = content[s..e].to_owned();
-                        let code = code.trim_matches(|c| c == '`').trim();
-                        if let Ok(code) = code_highlight(code, None::<&str>) {
+                        let code = code.trim_matches(|c| c == '`');
+                        if nodedata.tag.attrs.contains_key("inlined") {
+                            return None;
+                        }
+                        let code = concisemark::utils::remove_indent(code);
+                        if let Ok(code) = code_highlight(&code, None::<&str>) {
                             return Some(code);
                         }
                         return Some(code.to_owned());
