@@ -1061,7 +1061,6 @@
     margin: auto;
     padding: 45px;
     border-radius: 25px;
-    border: 2px solid #73AD21;
 }
 
 .menu-bar {
@@ -1079,4 +1078,16 @@
   padding: 14px 16px;
   text-decoration: none;
   font-size: 17px;
+}
+
+.content code{
+  word-break: break-word;
+  border-radius: 2px;
+  overflow-x: auto;
+  background-color: rgb(255, 245, 245);
+  color: rgb(255, 80, 44);
+  font-size: 0.87em;
+  padding: 0.065em 0.4em;
+  margin-left: 0.25em;
+  margin-right: 0.25em;
 }
