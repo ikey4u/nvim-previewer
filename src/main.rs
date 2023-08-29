@@ -30,18 +30,18 @@ use serde::Deserialize;
 use tracing_subscriber::fmt::writer::MakeWriter;
 
 const DEFAULT_PORT: u16 = 3008;
-const DEFUALT_HOST: &'static str = "127.0.0.1";
-const PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
-const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
-static PREVIEW_FILE_PATH: Lazy<Arc<Mutex<Option<String>>>> =
+const DEFUALT_HOST: &str = "127.0.0.1";
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+static PREVIEW_FILE_PATH: Lazy<Arc<Mutex<Option<PathBuf>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(None)));
+static PREVIEW_CSS_PATH: Lazy<Arc<Mutex<Option<PathBuf>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
 #[derive(Deserialize)]
 enum FileTag {
     #[serde(rename = "css")]
     CSS,
-    #[serde(rename = "js")]
-    JS,
     #[serde(rename = "path")]
     Path,
 }
@@ -134,20 +134,28 @@ async fn file(
     filemeta: Query<FileMeta>,
 ) -> impl IntoResponse {
     let filepath = match filemeta.tag {
-        FileTag::CSS => config.css_file.as_path(),
-        FileTag::JS => config.js_file.as_path(),
+        FileTag::CSS => {
+            let path = PREVIEW_CSS_PATH.lock().unwrap();
+            let p = path.clone();
+            if let Some(pp) = p {
+                pp
+            } else {
+                return (StatusCode::NOT_FOUND, "css file not found")
+                    .into_response();
+            }
+        }
         FileTag::Path => {
             if let Some(val) = filemeta.val.as_deref() {
-                Path::new(val)
+                Path::new(val).to_owned()
             } else {
-                Path::new("")
+                Path::new("").to_owned()
             }
         }
     };
-    let mime = mime_guess::from_path(filepath).first_or_text_plain();
+    let mime = mime_guess::from_path(&filepath).first_or_text_plain();
     let mut mime = mime.as_ref();
     let mut content = vec![];
-    if let Ok(mut f) = File::open(filepath) {
+    if let Ok(mut f) = File::open(&filepath) {
         _ = f.read_to_end(&mut content);
     }
     if content.is_empty() {
@@ -181,7 +189,7 @@ async fn render_as_pdf(
         .lock()
         .map_err(|e| anyerr!("failed to lock: {e:?}"))?;
     let filepath = filepath.as_ref().ok_or(anyerr!("no previewed file"))?;
-    let filepath = Path::new(filepath)
+    let filepath = filepath
         .canonicalize()
         .map_err(|e| anyerr!("failed to canonicalize filepath: {e:?}"))?;
     let mut preview_file = File::open(&filepath).map_err(|e| {
@@ -335,8 +343,7 @@ async fn render(
     let mut meta = None;
     let html = match PREVIEW_FILE_PATH.lock().unwrap().as_ref() {
         Some(path) => {
-            log::info!("start to render file: {path}");
-            let path = Path::new(path);
+            log::info!("start to render file: {}", path.display());
             let filedir = if let Some(d) = path.parent() { d } else { path };
             if let Ok(mut f) = File::open(path) {
                 let mut content = String::new();
@@ -437,37 +444,26 @@ async fn render(
         date = date,
         body = html,
     );
-    let mut is_css_support_inline = true;
-    if let Some(css_file_name) = config.css_file.file_stem() {
-        if css_file_name == "nvim-previewer-github" {
-            log::info!("css inline is disabled");
-            is_css_support_inline = false;
-        }
-    }
-    let html_template = if is_css_support_inline {
-        let url = css_inline::Url::parse(&format!(
-            "http://{DEFUALT_HOST}:{}",
-            config.port
-        ))
-        .ok();
-        tokio::task::spawn_blocking(|| {
-            let inliner = css_inline::CSSInliner::options()
-                .base_url(url)
-                .load_remote_stylesheets(true)
-                .build();
-            match inliner.inline(&html_template) {
-                Ok(v) => v,
-                Err(e) => {
-                    log::error!("failed to inline css style: {e:?}");
-                    html_template
-                }
+    let url = css_inline::Url::parse(&format!(
+        "http://{DEFUALT_HOST}:{}",
+        config.port
+    ))
+    .ok();
+    let html_template = tokio::task::spawn_blocking(|| {
+        let inliner = css_inline::CSSInliner::options()
+            .base_url(url)
+            .load_remote_stylesheets(true)
+            .build();
+        match inliner.inline(&html_template) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("failed to inline css style: {e:?}");
+                html_template
             }
-        })
-        .await
-        .unwrap()
-    } else {
-        html_template
-    };
+        }
+    })
+    .await
+    .unwrap();
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -482,8 +478,6 @@ async fn render(
 pub struct PreviewerConfig {
     pub browser: Option<String>,
     pub port: u16,
-    pub css_file: PathBuf,
-    pub js_file: PathBuf,
 }
 
 impl Default for PreviewerConfig {
@@ -491,8 +485,6 @@ impl Default for PreviewerConfig {
         PreviewerConfig {
             browser: None,
             port: DEFAULT_PORT,
-            css_file: PathBuf::new(),
-            js_file: PathBuf::new(),
         }
     }
 }
@@ -504,24 +496,15 @@ impl Display for PreviewerConfig {
             msg.push_str(&format!("\nbrowser: {browser}\n"));
         }
         msg.push_str(&format!("port: {}\n", self.port));
-        msg.push_str(&format!("css_file: {}\n", self.css_file.display()));
-        msg.push_str(&format!("js_file: {}\n", self.js_file.display()));
         f.write_str(&msg)
     }
 }
 
 impl PreviewerConfig {
-    pub fn new<S1, S2, P1, P2>(
-        browser: S1,
-        port: S2,
-        css_file: P1,
-        js_file: P2,
-    ) -> Self
+    pub fn new<S1, S2>(browser: S1, port: S2) -> Self
     where
         S1: AsRef<str>,
         S2: AsRef<str>,
-        P1: AsRef<Path>,
-        P2: AsRef<Path>,
     {
         let (browser, port) = (browser.as_ref().trim(), port.as_ref().trim());
         let mut config = PreviewerConfig::default();
@@ -533,8 +516,6 @@ impl PreviewerConfig {
                 config.port = v
             }
         }
-        config.css_file = css_file.as_ref().to_path_buf();
-        config.js_file = js_file.as_ref().to_path_buf();
         config
     }
 }
@@ -553,48 +534,11 @@ impl Previewer {
 
         let cachedir =
             PathBuf::from(client.eval("stdpath('cache')")).join(PKG_NAME);
-        let scriptdir =
-            PathBuf::from(client.eval("g:nvim_previewer_script_dir"));
-        let mut css_file = scriptdir.join(format!("{PKG_NAME}-github.css"));
-        let mut js_file = scriptdir.join(format!("{PKG_NAME}.js"));
-
-        let user_css_file = client.eval("g:nvim_previewer_css_file");
-        let user_js_file = client.eval("g:nvim_previewer_js_file");
-        if !user_css_file.is_empty() {
-            if user_css_file == "$WECHAT" {
-                css_file = scriptdir.join(format!("{PKG_NAME}-wechat.css"));
-            } else {
-                let user_css_file = PathBuf::from(user_css_file);
-                if user_css_file.exists() {
-                    css_file = user_css_file;
-                } else {
-                    log::warn!(
-                        "css file {} is not found, fallback to default",
-                        css_file.display()
-                    );
-                }
-            }
-        }
-        if !user_js_file.is_empty() {
-            let user_js_file = PathBuf::from(user_js_file);
-            if user_js_file.exists() {
-                js_file = user_js_file;
-            } else {
-                log::warn!(
-                    "js file {} is not found, fallback to default",
-                    js_file.display()
-                );
-            }
-        }
-
+        let browser = client.eval("g:nvim_previewer_browser");
+        let port = client.eval("g:nvim_previewer_port");
         Self {
             receiver,
-            config: PreviewerConfig::new(
-                client.eval("g:nvim_previewer_browser"),
-                client.eval("g:nvim_previewer_port"),
-                css_file,
-                js_file,
-            ),
+            config: PreviewerConfig::new(browser, port),
             client: RefCell::new(client),
             logdir: cachedir.join("logs"),
             cachedir,
@@ -605,16 +549,11 @@ impl Previewer {
         &self.receiver
     }
 
-    fn preview(&self, params: Vec<Value>) -> Result<()> {
-        {
-            let mut path = PREVIEW_FILE_PATH.lock().unwrap();
-            *path = params
-                .get(0)
-                .ok_or(anyerr!("file path is not provided"))?
-                .as_str()
-                .map(|v| v.to_owned());
-        }
+    pub fn eval<S: AsRef<str>>(&self, vimcmd: S) -> String {
+        self.client.borrow_mut().eval(vimcmd.as_ref())
+    }
 
+    fn preview(&self) -> Result<()> {
         let url = format!("http://{DEFUALT_HOST}:{}", self.config.port);
         let r = if let Some(browser) = &self.config.browser {
             open::with(url, browser)
@@ -672,14 +611,44 @@ async fn main() {
     log::info!("server started with configuration: {}", previewer.config);
 
     for (event, params) in previewer.recv() {
-        let r = match event.as_str() {
-            "preview" => previewer
-                .preview(params)
-                .map_err(|e| format!("oops, {e:?}")),
-            _ => Err("unknown command".to_owned()),
+        let file_path = if let Some(Some(p)) =
+            params.get(0).map(|x| x.as_str().map(|x| x.to_owned()))
+        {
+            p
+        } else {
+            previewer.print("no file to be previewed");
+            continue;
         };
-        if let Err(e) = r {
-            previewer.print(e)
+        {
+            let mut path = PREVIEW_FILE_PATH.lock().unwrap();
+            *path = Some(Path::new(&file_path).to_owned())
+        }
+        log::info!("file path: {file_path}");
+
+        let script_dir = if let Some(Some(p)) =
+            params.get(1).map(|x| x.as_str().map(|x| x.to_owned()))
+        {
+            p
+        } else {
+            previewer.print("failed to find nvim-previewer plugin directory");
+            continue;
+        };
+        log::info!("script directory: {script_dir}");
+
+        let css_file_path = match event.as_str() {
+            "preview_alt" => {
+                Path::new(&script_dir).join("nvim-previewer-alt.css")
+            }
+            _ => Path::new(&script_dir).join("nvim-previewer-default.css"),
+        };
+        log::info!("css file path: {}", css_file_path.display());
+        {
+            let mut path = PREVIEW_CSS_PATH.lock().unwrap();
+            *path = Some(css_file_path);
+        }
+
+        if let Err(e) = previewer.preview() {
+            previewer.print(format!("{e:?}"));
         }
     }
 }

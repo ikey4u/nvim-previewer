@@ -35,4 +35,12 @@ if s:jobid <= 0
     finish
 endif
 
-command! -nargs=0 Preview call rpcnotify(s:jobid, 'preview', expand('%:p'))
+" The following will not work
+"
+"     command! -nargs=0 Preview    call rpcnotify(s:jobid, 'preview', expand('%:p'), expand('%:p:h'))
+"
+" but passing with variable `s:script_dir` works.
+"
+let s:script_dir = expand('<sfile>:p:h')
+command! -nargs=0 Preview    call rpcnotify(s:jobid, 'preview', expand('%:p'), s:script_dir)
+command! -nargs=0 PreviewAlt call rpcnotify(s:jobid, 'preview_alt', expand('%:p'), s:script_dir)

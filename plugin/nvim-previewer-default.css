@@ -73,3 +73,9 @@ body {
 .content li:first-child {
   margin-top: 16px;
 }
+
+.content img {
+  border-style: none;
+  max-width: 100%;
+  box-sizing: content-box;
+}
