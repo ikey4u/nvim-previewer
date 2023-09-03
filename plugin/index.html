@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{title}</title>
+    <meta charset="utf-8">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="msapplication-tap-highlight" content="no">
+    <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1">
+    <link rel="stylesheet" type="text/css" href="/file?tag=css">
+    {script}
+  </head>
+  <body>
+    <div class="main">
+      <div class="menu">
+        <div class="right-menu">
+          <a href="/pdf">View as PDF</a>
+          <a href="/pdf?is_source=true">View Latex Source</a>
+          <button class="copy-button" onclick="exportHtml()">
+            COPY HTML
+          </button>
+        </div>
+      </div>
+      <div class="article">
+        <h1 class="article-title">{title}{gap}{subtitle}</h1>
+        <div class="meta">{date}</div>
+        <div class="content" id="content">{body}</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -128,3 +128,7 @@ h1 {
 .content li:first-child {
   margin-top: 16px;
 }
+
+.copy-button {
+  margin-top: 16px;
+}

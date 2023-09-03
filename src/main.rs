@@ -58,7 +58,12 @@ pub fn code_highlight<S1: AsRef<str>, S2: AsRef<str>>(
 ) -> Result<String> {
     let code = code.as_ref();
     let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
-    let mut syntax = ss.find_syntax_plain_text();
+    // a quick and dirty syntax highlighting
+    let mut syntax = if let Some(syntax) = ss.find_syntax_by_extension("bash") {
+        syntax
+    } else {
+        ss.find_syntax_plain_text()
+    };
     if let Some(typ) = typ {
         if let Some(s) = ss.find_syntax_by_extension(typ.as_ref()) {
             syntax = s;
@@ -405,45 +410,15 @@ async fn render(
         ("".to_owned(), "".to_owned(), "".to_owned())
     };
     let html_template = format!(
-        r#"
-        <!DOCTYPE html>
-        <html>
-            <head>
-                <title>{title}</title>
-
-                <meta charset="utf-8">
-                <meta name="format-detection" content="telephone=no">
-                <meta name="msapplication-tap-highlight" content="no">
-                <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1">
-                <link rel="stylesheet" type="text/css" href="/file?tag=css">
-                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/katex.min.css" integrity="sha384-Juol1FqnotbkyZUT5Z7gUPjQ9gzlwCENvUZTpQBAPxtusdwFLRy382PSDx5UUJ4/" crossorigin="anonymous">
-                <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/katex.min.js" integrity="sha384-97gW6UIJxnlKemYavrqDHSX3SiygeOwIZhwyOKRfSaf0JWKRVj9hLASHgFTzT+0O" crossorigin="anonymous"></script>
-                <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.3/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous" onload="renderMathInElement(document.body);"> </script>
-                <script src="/file?tag=js"></script>
-            </head>
-            <body>
-                <div class="main">
-                    <div class="menu">
-                        <div class="right-menu">
-                            <a href="/pdf">View as PDF</a>
-                            <a href="/pdf?is_source=true">View Latex Source</a>
-                        </div>
-                    </div>
-                    <div class="article">
-                        <h1 class="article-title">{title}{gap}{subtitle}</h1>
-                        <div class="meta">{date}</div>
-                        <div class="content">{body}</div>
-                    </div>
-                </div>
-            </body>
-        </html>
-    "#,
+        include_str!("../plugin/index.html"),
         title = title,
+        script = include_str!("../plugin/nvim-previewer.js"),
         gap = if subtitle.is_empty() { "" } else { " - " },
         subtitle = subtitle,
         date = date,
         body = html,
     );
+
     let url = css_inline::Url::parse(&format!(
         "http://{DEFUALT_HOST}:{}",
         config.port
@@ -464,6 +439,7 @@ async fn render(
     })
     .await
     .unwrap();
+
     Response::builder()
         .status(StatusCode::OK)
         .header(
