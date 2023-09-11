@@ -27,7 +27,7 @@
   margin-bottom: 14px;
 }
 
-.content p {
+p {
   text-align: left;
   line-height: 1.75;
   font-family: -apple-system-font, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB, Microsoft YaHei UI, Microsoft YaHei, Arial, sans-serif;
@@ -38,12 +38,20 @@
   visibility: visible;
 }
 
-
-h1 {
-  font-size: 20px;
+ul, li {
+  font-family: -apple-system-font, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB, Microsoft YaHei UI, Microsoft YaHei, Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  color: rgb(63, 63, 63);
 }
 
-.content h1 {
+a {
+  font-family: -apple-system-font, BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB, Microsoft YaHei UI, Microsoft YaHei, Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.1em;
+}
+
+h1 {
   font-size: 20px;
 }
 
@@ -105,6 +113,7 @@ h1 {
 }
 
 .content code {
+  font-size: 14px;
   margin: 0 0.15em;
   padding: 0 0.3em;
   white-space: pre-wrap;
@@ -119,6 +128,9 @@ h1 {
   border-style: none;
   max-width: 100%;
   box-sizing: content-box;
+  border-radius: 25px;
+  /* from https://htmlcssfreebies.com/css-box-shadow-examples/ */
+  box-shadow: 0px 8px 24px 0px rgba(140, 149, 159, 0.2);
 }
 
 .content li {
